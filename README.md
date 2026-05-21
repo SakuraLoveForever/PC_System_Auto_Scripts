@@ -12,9 +12,15 @@ Windows 桌面工具：电源计划自动监控 + 启动项管理，支持中英
 - **可收折侧边栏** — 收起后仅显示图标按钮，节省空间
 - **单实例运行** — 重复启动时自动唤起已有窗口
 
-## 截图
+## 界面预览
 
-> 5 套风格预览详见 `DESIGN_*.md`
+| Apple | Claude | Linear |
+|-------|--------|--------|
+| ![Apple](designs/apple.png) | ![Claude](designs/claude.png) | ![Linear](designs/linear.png) |
+
+| NVIDIA | Spotify |
+|--------|---------|
+| ![NVIDIA](designs/nvidia.png) | ![Spotify](designs/spotify.png) |
 
 ## 技术栈
 
