@@ -1,7 +1,7 @@
 {
   "style": "Spotify",
   "language": "zh",
-  "monitor_enabled": true,
+  "monitor_enabled": false,
   "check_interval": 60,
   "target_guid": "",
   "minimize_to_tray": true,
