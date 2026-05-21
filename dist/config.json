@@ -1,0 +1,14 @@
+{
+  "style": "Apple",
+  "language": "zh",
+  "monitor_enabled": false,
+  "check_interval": 60,
+  "target_guid": "",
+  "minimize_to_tray": true,
+  "col_widths": [
+    0.25,
+    0.42,
+    0.15,
+    0.18
+  ]
+}

@@ -1,0 +1,2 @@
+# PC_System_Auto_Scripts
+一个启动项管理和定时电源计划监控的清新小软件
