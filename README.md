@@ -43,15 +43,15 @@ Windows 桌面工具：电源计划自动监控 + 启动项管理，支持中英
 ## 项目结构
 
 ```
-├── main.py              # 主程序入口 + UI
-├── styles.py            # 5 套 DesignStyle 定义
-├── i18n.py              # 中/英文翻译字典
-├── power_manager.py     # powercfg 封装（检测/切换电源方案）
-├── startup_manager.py   # 注册表 Run 键读写
-├── build.py             # PyInstaller 一键打包脚本
-├── config.json          # 用户配置（运行时自动生成）
-├── requirements.txt     # Python 依赖
-└── designs/             # 各风格预览截图
+├── main.py
+├── styles.py
+├── i18n.py
+├── power_manager.py
+├── startup_manager.py
+├── build.py
+├── config.json
+├── requirements.txt
+└── designs/
 ```
 
 ## 开发

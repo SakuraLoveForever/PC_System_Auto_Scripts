@@ -1160,6 +1160,12 @@ class App(ctk.CTk):
             self._power_status_badge.configure(
                 text=self._i18n.t("power.status_needs_fix"), text_color="#e8a55a")
 
+    def _do_switch_plan(self, guid: str):
+        """Switch to the given power plan guid."""
+        from power_manager import set_active_plan
+        if set_active_plan(guid):
+            self._refresh_power_status()
+
     def _check_now(self):
         self._show_check_result(self._i18n.t("power.status_checking"), "info", persistent=True)
         def _do():
@@ -1263,8 +1269,30 @@ class App(ctk.CTk):
                 icon.stop()
                 self.after(0, self._force_quit)
 
+            def _switch_plan(icon, item):
+                plan_name = item.text.rstrip(" ✓")
+                plans = get_all_plans()
+                for p in plans:
+                    if p.name == plan_name:
+                        self.after(0, lambda g=p.guid: self._do_switch_plan(g))
+                        break
+
+            plans = get_all_plans()
+            plan_items = []
+            for p in plans:
+                label = p.name + ("  ✓" if p.is_active else "")
+                plan_items.append(
+                    pystray.MenuItem(label, _switch_plan))
+            if not plan_items:
+                plan_items.append(
+                    pystray.MenuItem(self._i18n.t("power.unable_detect"),
+                                     lambda: None, enabled=False))
+
             menu = pystray.Menu(
                 pystray.MenuItem(self._i18n.t("tray.show"), on_show, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(self._i18n.t("power.title"),
+                                 pystray.Menu(*plan_items)),
                 pystray.MenuItem(self._i18n.t("tray.check"),
                                  lambda: self.after(0, self._check_now)),
                 pystray.Menu.SEPARATOR,

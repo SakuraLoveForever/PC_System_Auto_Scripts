@@ -1,14 +1,14 @@
 {
-  "style": "Spotify",
+  "style": "Linear",
   "language": "zh",
-  "monitor_enabled": false,
+  "monitor_enabled": true,
   "check_interval": 60,
   "target_guid": "",
   "minimize_to_tray": true,
   "col_widths": [
     0.25,
-    0.42,
-    0.15,
+    0.427380073800738,
+    0.14261992619926198,
     0.18
   ]
 }
