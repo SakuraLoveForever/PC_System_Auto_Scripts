@@ -17,6 +17,7 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw
 from tkinter import filedialog
 
+from pypinyin import lazy_pinyin, Style
 from styles import STYLES, DEFAULT_STYLE, DesignStyle
 from power_manager import (
     PowerMonitor,
@@ -255,6 +256,10 @@ class App(ctk.CTk):
         self._tray_thread = None
         self._closing = False
         self._running = True  # for IPC server loop
+
+        # Sort state for startup list
+        self._sort_key: str = "name"
+        self._sort_ascending: bool = True
 
         # Column widths (fractions, sum ~1.0)
         self._col_widths = list(self.cfg.get("col_widths", COL_DEFAULTS))
@@ -521,10 +526,7 @@ class App(ctk.CTk):
             self._toggle_btn.configure(text="◀  " + self._i18n.t("sidebar.collapse"))
         else:
             self._toggle_btn.configure(text="▶")
-        col_i18n = {"name": "startup.col_name", "path": "startup.col_path",
-                     "source": "startup.col_source", "action": "startup.col_action"}
-        for key, (lbl, _, _, _) in self._col_header_widgets.items():
-            lbl.configure(text=self._i18n.t(col_i18n.get(key, key)))
+        self._update_sort_indicator()
         self._refresh_power_status()
         self._refresh_startup_list()
 
@@ -756,7 +758,10 @@ class App(ctk.CTk):
         for i, key in enumerate(COL_KEYS):
             lbl = ctk.CTkLabel(self._header_frame, text=self._i18n.t(col_i18n[key]),
                                font=ctk.CTkFont(size=13, weight="bold"),
-                               text_color=s.text_secondary, anchor="w")
+                               text_color=s.text_secondary, anchor="w",
+                               cursor="hand2" if key in ("name", "source") else None)
+            if key in ("name", "source"):
+                lbl.bind("<Button-1>", lambda e, k=key: self._toggle_sort(k))
             self._reg(lbl, lambda w, s: w.configure(text_color=s.text_secondary))
 
             if i < 3:
@@ -958,6 +963,29 @@ class App(ctk.CTk):
             text_color=s.text_secondary))
         return row
 
+    def _toggle_sort(self, key: str):
+        """Toggle sort direction when clicking a sortable column header."""
+        if self._sort_key == key:
+            self._sort_ascending = not self._sort_ascending
+        else:
+            self._sort_key = key
+            self._sort_ascending = True
+        self._update_sort_indicator()
+        self._refresh_startup_list()
+
+    def _update_sort_indicator(self):
+        """Update column header labels to show sort direction (▲/▼)."""
+        col_i18n = {"name": "startup.col_name", "path": "startup.col_path",
+                     "source": "startup.col_source", "action": "startup.col_action"}
+        for key, (lbl, _, _) in self._col_header_widgets.items():
+            base = self._i18n.t(col_i18n.get(key, key))
+            if key == self._sort_key:
+                arrow = " ▲" if self._sort_ascending else " ▼"
+                lbl_text = base + arrow
+            else:
+                lbl_text = base
+            lbl.configure(text=lbl_text)
+
     def _refresh_startup_list(self):
         for w in self._startup_list_frame.winfo_children():
             w.destroy()
@@ -967,6 +995,9 @@ class App(ctk.CTk):
         self._stylables = [(w, fn) for w, fn in self._stylables if w.winfo_exists()]
 
         items = get_all_items()
+        items.sort(key=lambda it: ''.join(
+            lazy_pinyin(getattr(it, self._sort_key, ""), style=Style.TONE3)
+        ), reverse=not self._sort_ascending)
         self._startup_count_label.configure(
             text=f"{len(items)}{self._i18n.t('startup.entries')}")
 
