@@ -1,0 +1,15 @@
+{
+  "style": "Magic Dark",
+  "language": "zh",
+  "monitor_enabled": true,
+  "check_interval": 60,
+  "target_guid": "",
+  "minimize_to_tray": true,
+  "start_to_tray": true,
+  "col_widths": [
+    0.28,
+    0.56,
+    0.08,
+    0.08
+  ]
+}

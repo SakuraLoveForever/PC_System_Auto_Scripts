@@ -29,6 +29,14 @@ T: Dict[str, Dict[str, str]] = {
         "zh": "收起",
         "en": "Collapse",
     },
+    "sidebar.appearance": {
+        "zh": "外观",
+        "en": "APPEARANCE",
+    },
+    "sidebar.settings": {
+        "zh": "设置",
+        "en": "SETTINGS",
+    },
     "sidebar.expand": {
         "zh": "展开",
         "en": "Expand",
@@ -220,6 +228,32 @@ T: Dict[str, Dict[str, str]] = {
     "tray.exit": {
         "zh": "退出",
         "en": "Exit",
+    },
+
+    # Compact mode
+    "compact.toggle": {
+        "zh": "精简",
+        "en": "Compact",
+    },
+    "compact.full": {
+        "zh": "完整",
+        "en": "Full",
+    },
+    "compact.current_plan": {
+        "zh": "当前",
+        "en": "Current",
+    },
+    "compact.switch_power": {
+        "zh": "切换电源",
+        "en": "Switch Power",
+    },
+    "compact.switch_language": {
+        "zh": "切换语言",
+        "en": "Switch Language",
+    },
+    "compact.switch_style": {
+        "zh": "切换外观",
+        "en": "Switch Style",
     },
 
     # General

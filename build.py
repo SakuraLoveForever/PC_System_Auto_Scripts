@@ -23,6 +23,9 @@ CMD = [
     "--name", NAME,
     "--clean",
     "--noconfirm",
+    "--hidden-import", "pystray",
+    "--hidden-import", "PIL",
+    "--hidden-import", "PIL._tkinter_finder",
     str(BASE_DIR / "main.py"),
 ]
 

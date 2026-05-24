@@ -1,14 +1,37 @@
-"""Power plan detection and management for Windows."""
+"""Power plan detection and management for Windows — registry + Win32 API, with subprocess fallback."""
 
-import locale
-import subprocess
+import ctypes
 import re
+import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+import uuid
+import winreg
+from dataclasses import dataclass
 from typing import List, Optional, Callable
 
-_SYS_ENC = locale.getpreferredencoding() or "utf-8"
+
+class _GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_uint8 * 8),
+    ]
+
+# Power scheme registry path
+_POWER_SCHEMES_KEY = r"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes"
+
+# Power plan names/patterns to exclude (internal/hidden Windows overlay schemes)
+_HIDDEN_PLAN_PATTERNS = [
+    "overlay",
+]
+
+
+def _is_hidden_plan(name: str) -> bool:
+    name_lower = name.lower()
+    return any(pattern in name_lower for pattern in _HIDDEN_PLAN_PATTERNS)
+
 
 # Power plan names that are acceptable (case-insensitive matching)
 HIGH_PERFORMANCE_PLANS = [
@@ -17,6 +40,10 @@ HIGH_PERFORMANCE_PLANS = [
     "卓越性能",
     "高性能",
 ]
+
+_GUID_RE = re.compile(
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 @dataclass
@@ -27,45 +54,172 @@ class PowerPlan:
     is_acceptable: bool = False
 
 
-def _parse_powercfg_list(output: str) -> List[PowerPlan]:
-    plans = []
-    for line in output.splitlines():
-        m = re.search(
-            r"([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})",
-            line,
-        )
-        if m:
-            guid = m.group(1)
-            rest = line[m.end():]
-            name_m = re.search(r"\(([^)]+)\)", rest)
-            name = name_m.group(1).strip() if name_m else guid
-            is_active = "*" in line
-            is_acceptable = _is_acceptable_name(name)
-            plans.append(PowerPlan(
-                guid=guid,
-                name=name,
-                is_active=is_active,
-                is_acceptable=is_acceptable,
-            ))
-    return plans
-
-
 def _is_acceptable_name(name: str) -> bool:
     name_lower = name.lower()
     return any(target in name_lower for target in HIGH_PERFORMANCE_PLANS)
 
 
-def get_all_plans() -> List[PowerPlan]:
+def _resolve_indirect_string(raw: str) -> str:
+    """Resolve MUI indirect strings like @%SystemRoot%\\system32\\powrprof.dll,-19,fallback."""
+    if not raw.startswith("@"):
+        return raw
+    # Try SHLoadIndirectString first
     try:
-        output = subprocess.check_output(
-            ["powercfg", "/list"],
-            encoding=_SYS_ENC,
-            errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-    except (subprocess.CalledProcessError, UnicodeDecodeError):
+        buf = ctypes.create_unicode_buffer(512)
+        result = ctypes.windll.shlwapi.SHLoadIndirectString(raw, buf, 512, None)
+        if result == 0 and buf.value:
+            return buf.value
+    except OSError:
+        pass
+    # Fallback: extract text after the last comma (the display fallback)
+    # Format: @path,-resId,Fallback Display Name
+    comma_idx = raw.rfind(",")
+    if comma_idx >= 0:
+        after = raw[comma_idx + 1:]
+        # Make sure it's not just a number (resource ID)
+        if after and not after.lstrip("-").isdigit():
+            return after
+    return raw
+
+
+def _read_reg_value(key_path: str, value_name: str) -> Optional[str]:
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
+            data, _ = winreg.QueryValueEx(key, value_name)
+            return str(data)
+    except OSError:
+        return None
+
+
+def _subprocess_flags() -> int:
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _run_powercfg(args: List[str]) -> Optional[str]:
+    """Run powercfg and decode localized Windows output reliably."""
+    encodings = ["mbcs", "utf-8", "gbk", "cp936"]
+    for encoding in encodings:
+        try:
+            proc = subprocess.run(
+                ["powercfg", *args],
+                capture_output=True,
+                text=True,
+                encoding=encoding,
+                errors="replace",
+                creationflags=_subprocess_flags(),
+                timeout=10,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return proc.stdout
+        except (LookupError, OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
+def _plan_name_from_powercfg_line(line: str, guid: str) -> str:
+    # powercfg /list prints localized labels, but the visible plan name is
+    # consistently wrapped in parentheses before the optional active marker.
+    match = re.search(r"\((.*?)\)\s*\*?\s*$", line)
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+
+    rest = line.split(guid, 1)[-1].strip()
+    rest = rest.strip("*").strip()
+    return rest or guid
+
+
+def _get_plans_from_powercfg() -> List[PowerPlan]:
+    output = _run_powercfg(["/list"])
+    if not output:
         return []
-    return _parse_powercfg_list(output)
+
+    plans: List[PowerPlan] = []
+    seen = set()
+    for line in output.splitlines():
+        guid_match = _GUID_RE.search(line)
+        if not guid_match:
+            continue
+        guid = guid_match.group(1).lower()
+        if guid in seen:
+            continue
+        seen.add(guid)
+
+        name = _plan_name_from_powercfg_line(line, guid_match.group(1))
+        if name.startswith("@") or _is_hidden_plan(name):
+            continue
+
+        plans.append(PowerPlan(
+            guid=guid,
+            name=name,
+            is_active="*" in line,
+            is_acceptable=_is_acceptable_name(name),
+        ))
+
+    if any(p.is_active for p in plans):
+        return plans
+
+    active_output = _run_powercfg(["/getactivescheme"])
+    active_guid = None
+    if active_output:
+        match = _GUID_RE.search(active_output)
+        if match:
+            active_guid = match.group(1).lower()
+    if active_guid:
+        for plan in plans:
+            plan.is_active = plan.guid == active_guid
+    return plans
+
+
+def _get_plans_from_registry() -> List[PowerPlan]:
+    """Read power plans from registry as a fallback when powercfg is unavailable."""
+    plans = []
+    active_guid = (_read_reg_value(_POWER_SCHEMES_KEY, "ActivePowerScheme") or "").lower()
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _POWER_SCHEMES_KEY) as schemes_key:
+            i = 0
+            while True:
+                try:
+                    guid = winreg.EnumKey(schemes_key, i)
+                except OSError:
+                    break
+                i += 1
+
+                try:
+                    plan_key = winreg.OpenKey(schemes_key, guid)
+                except OSError:
+                    continue
+
+                with plan_key:
+                    name = guid
+                    try:
+                        raw_name, _ = winreg.QueryValueEx(plan_key, "FriendlyName")
+                        name = _resolve_indirect_string(str(raw_name))
+                    except OSError:
+                        pass
+
+                if name.startswith("@") or _is_hidden_plan(name):
+                    continue
+
+                normalized_guid = guid.lower()
+                plans.append(PowerPlan(
+                    guid=normalized_guid,
+                    name=name,
+                    is_active=normalized_guid == active_guid,
+                    is_acceptable=_is_acceptable_name(name),
+                ))
+    except OSError:
+        pass
+
+    return plans
+
+
+def get_all_plans() -> List[PowerPlan]:
+    """Read visible Windows power plans, matching Control Panel/powercfg output first."""
+    plans = _get_plans_from_powercfg()
+    if plans:
+        return plans
+    return _get_plans_from_registry()
 
 
 def get_active_plan() -> Optional[PowerPlan]:
@@ -75,18 +229,27 @@ def get_active_plan() -> Optional[PowerPlan]:
     return None
 
 
-def set_active_plan(guid: str) -> bool:
+def set_active_plan(guid_str: str) -> bool:
+    """Set active power plan via PowerSetActiveScheme with powercfg fallback."""
+    # Try direct Win32 API first
     try:
-        subprocess.run(
-            ["powercfg", "/setactive", guid],
-            check=True,
+        u = uuid.UUID(guid_str)
+        g = _GUID.from_buffer_copy(u.bytes_le)
+        result = ctypes.windll.powrprof.PowerSetActiveScheme(None, ctypes.byref(g))
+        if result == 0:
+            return True
+    except Exception:
+        pass
+    # Fallback: powercfg (no console window)
+    try:
+        proc = subprocess.run(
+            ["powercfg", "/setactive", guid_str],
             capture_output=True,
-            encoding=_SYS_ENC,
-            errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW,
+            creationflags=_subprocess_flags(),
+            timeout=10,
         )
-        return True
-    except subprocess.CalledProcessError:
+        return proc.returncode == 0
+    except Exception:
         return False
 
 
@@ -108,7 +271,7 @@ class PowerMonitor:
 
     def __init__(self, on_status_change: Optional[Callable] = None, interval_seconds: int = 60):
         self._interval = interval_seconds
-        self._target_guid: Optional[str] = None  # None = auto-detect first acceptable
+        self._target_guid: Optional[str] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._on_status_change = on_status_change
@@ -182,7 +345,6 @@ class PowerMonitor:
         return result
 
     def _is_plan_ok(self, active: PowerPlan) -> bool:
-        """Check if the active plan matches the desired target."""
         if self._target_guid:
             return active.guid == self._target_guid
         return is_acceptable_plan(active.name)

@@ -1,4 +1,4 @@
-# PC System Auto Scripts
+﻿# PC System Auto Scripts
 
 Windows 桌面工具：电源计划自动监控 + 启动项管理，支持中英文切换、5 套暗色主题、系统托盘常驻。
 
@@ -6,7 +6,7 @@ Windows 桌面工具：电源计划自动监控 + 启动项管理，支持中英
 
 - **电源计划监控** — 自动检测当前电源方案，若非高性能/卓越性能则自动切换，支持自定义检查间隔和目标方案
 - **启动项管理** — 查看/添加/删除 Windows 注册表启动项（`HKCU\Run`），可调列宽
-- **5 套设计风格** — Apple / Claude / Linear / NVIDIA / Spotify，一键切换
+- **5 套设计风格** — Magic Dark / Magic Slate / Magic Aurora / Magic Ember / Magic Ocean，一键切换
 - **中英文双语** — 所有 UI 文字实时切换
 - **系统托盘** — 关闭窗口时最小化到托盘，托盘菜单支持快捷操作
 - **可收折侧边栏** — 收起后仅显示图标按钮，节省空间
@@ -22,13 +22,13 @@ Windows 桌面工具：电源计划自动监控 + 启动项管理，支持中英
 
 ## 界面预览
 
-| Apple | Claude | Linear |
-|-------|--------|--------|
-| ![Apple](designs/apple.png) | ![Claude](designs/claude.png) | ![Linear](designs/linear.png) |
+| Magic Dark | Magic Slate | Magic Aurora |
+|------------|-------------|--------------|
+| ![Magic Dark](designs/apple.png) | ![Magic Slate](designs/claude.png) | ![Magic Aurora](designs/linear.png) |
 
-| NVIDIA | Spotify |
-|--------|---------|
-| ![NVIDIA](designs/nvidia.png) | ![Spotify](designs/spotify.png) |
+| Magic Ember | Magic Ocean |
+|-------------|-------------|
+| ![Magic Ember](designs/nvidia.png) | ![Magic Ocean](designs/spotify.png) |
 
 ## 技术栈
 
@@ -75,7 +75,7 @@ python build.py
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `style` | string | 当前风格：`Linear` / `Apple` / `Claude` / `NVIDIA` / `Spotify` |
+| `style` | string | 当前风格：`Magic Dark` / `Magic Slate` / `Magic Aurora` / `Magic Ember` / `Magic Ocean` |
 | `language` | string | 界面语言：`zh` / `en` |
 | `monitor_enabled` | bool | 启动时是否开启电源监控 |
 | `check_interval` | int | 电源检查间隔（秒） |
@@ -86,3 +86,4 @@ python build.py
 ## License
 
 MIT
+
