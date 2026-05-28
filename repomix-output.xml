@@ -72,64 +72,6 @@ This section contains the contents of the repository's files.
 * text=auto
 </file>
 
-<file path="build.py">
-"""
-PyInstaller build script for PC_System_Auto_Scripts.
-Usage:
-    pip install pyinstaller customtkinter pystray Pillow
-    python build.py
-"""
-
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-
-BASE_DIR = Path(__file__).resolve().parent
-DIST_DIR = BASE_DIR / "dist"
-NAME = "PC_System_Auto_Scripts"
-
-CMD = [
-    sys.executable,
-    "-m",
-    "PyInstaller",
-    "--onefile",
-    "--windowed",
-    "--name", NAME,
-    "--clean",
-    "--noconfirm",
-    "--hidden-import", "pystray",
-    "--hidden-import", "PIL",
-    "--hidden-import", "PIL._tkinter_finder",
-    str(BASE_DIR / "main.py"),
-]
-
-
-def main():
-    print("Cleaning old build artifacts...")
-    for d in [BASE_DIR / "build", DIST_DIR]:
-        if d.exists():
-            shutil.rmtree(d, onexc=lambda func, path, exc: print(f"  skip locked: {path}"))
-    for f in BASE_DIR.glob("*.spec"):
-        try:
-            f.unlink()
-        except OSError:
-            pass
-
-    print("Building exe with PyInstaller...")
-    result = subprocess.run(CMD, cwd=str(BASE_DIR))
-    if result.returncode == 0:
-        exe = DIST_DIR / f"{NAME}.exe"
-        print(f"\nBuild successful: {exe}")
-    else:
-        print("\nBuild failed. Check errors above.", file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-</file>
-
 <file path="DESIGN_apple.md">
 ---
 version: alpha
@@ -2730,6 +2672,183 @@ What distinguishes Spotify is its pill-and-circle geometry. Primary buttons use 
 6. Album art provides all the color — the UI stays achromatic
 </file>
 
+<file path="startup_manager.py">
+"""Windows startup items management via registry."""
+
+import os
+import sys
+import winreg
+from dataclasses import dataclass
+from typing import List
+
+STARTUP_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+@dataclass
+class StartupItem:
+    name: str
+    path: str
+    source: str  # "registry" or "startup_folder"
+
+
+def _get_startup_folder() -> str:
+    return os.path.join(
+        os.environ.get("APPDATA", ""),
+        r"Microsoft\Windows\Start Menu\Programs\Startup",
+    )
+
+
+def get_registry_items() -> List[StartupItem]:
+    """Get startup items from HKCU registry Run key."""
+    items = []
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_PATH)
+        i = 0
+        while True:
+            try:
+                name, value, _ = winreg.EnumValue(key, i)
+                items.append(StartupItem(name=name, path=value, source="registry"))
+                i += 1
+            except OSError:
+                break
+        winreg.CloseKey(key)
+    except OSError:
+        pass
+    return items
+
+
+def get_startup_folder_items() -> List[StartupItem]:
+    """Get startup items from the Startup folder (shortcuts)."""
+    items = []
+    folder = _get_startup_folder()
+    if not os.path.isdir(folder):
+        return items
+    for entry in os.listdir(folder):
+        path = os.path.join(folder, entry)
+        name = os.path.splitext(entry)[0]
+        if entry.lower().endswith((".lnk", ".url")):
+            items.append(StartupItem(name=name, path=path, source="startup_folder"))
+        elif os.path.isfile(path):
+            items.append(StartupItem(name=name, path=path, source="startup_folder"))
+    return items
+
+
+def get_all_items() -> List[StartupItem]:
+    """Get all startup items from both registry and startup folder."""
+    return get_registry_items() + get_startup_folder_items()
+
+
+def add_registry_startup(name: str, exe_path: str) -> bool:
+    """Add an entry to HKCU Run. Returns True on success."""
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            STARTUP_REG_PATH,
+            0,
+            winreg.KEY_SET_VALUE,
+        )
+        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, exe_path)
+        winreg.CloseKey(key)
+        return True
+    except OSError:
+        return False
+
+
+def remove_registry_startup(name: str) -> bool:
+    """Remove an entry from HKCU Run. Returns True on success."""
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            STARTUP_REG_PATH,
+            0,
+            winreg.KEY_SET_VALUE,
+        )
+        winreg.DeleteValue(key, name)
+        winreg.CloseKey(key)
+        return True
+    except OSError:
+        return False
+
+
+def remove_startup_folder_item(name: str) -> bool:
+    """Remove a file from the startup folder. Returns True on success."""
+    folder = _get_startup_folder()
+    for entry in os.listdir(folder):
+        entry_name = os.path.splitext(entry)[0]
+        if entry_name == name:
+            try:
+                os.remove(os.path.join(folder, entry))
+                return True
+            except OSError:
+                return False
+    return False
+
+
+def get_app_exe_path() -> str:
+    """Get the path to the current executable or script."""
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    return sys.argv[0]
+</file>
+
+<file path="build.py">
+"""
+PyInstaller build script for PC_System_Auto_Scripts.
+Usage:
+    pip install pyinstaller customtkinter pystray Pillow
+    python build.py
+"""
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+DIST_DIR = BASE_DIR / "dist"
+NAME = "PC_System_Auto_Scripts"
+
+CMD = [
+    sys.executable,
+    "-m",
+    "PyInstaller",
+    "--onefile",
+    "--windowed",
+    "--name", NAME,
+    "--clean",
+    "--noconfirm",
+    "--hidden-import", "pystray",
+    "--hidden-import", "PIL",
+    "--hidden-import", "PIL._tkinter_finder",
+    str(BASE_DIR / "main.py"),
+]
+
+
+def main():
+    print("Cleaning old build artifacts...")
+    for d in [BASE_DIR / "build", DIST_DIR]:
+        if d.exists():
+            shutil.rmtree(d, onexc=lambda func, path, exc: print(f"  skip locked: {path}"))
+    for f in BASE_DIR.glob("*.spec"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+    print("Building exe with PyInstaller...")
+    result = subprocess.run(CMD, cwd=str(BASE_DIR))
+    if result.returncode == 0:
+        exe = DIST_DIR / f"{NAME}.exe"
+        print(f"\nBuild successful: {exe}")
+    else:
+        print("\nBuild failed. Check errors above.", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
 <file path="i18n.py">
 """Internationalization: Chinese / English translations."""
 
@@ -2971,6 +3090,22 @@ T: Dict[str, Dict[str, str]] = {
     "compact.full": {
         "zh": "完整",
         "en": "Full",
+    },
+    "compact.current_plan": {
+        "zh": "当前",
+        "en": "Current",
+    },
+    "compact.switch_power": {
+        "zh": "切换电源",
+        "en": "Switch Power",
+    },
+    "compact.switch_language": {
+        "zh": "切换语言",
+        "en": "Switch Language",
+    },
+    "compact.switch_style": {
+        "zh": "切换外观",
+        "en": "Switch Style",
     },
 
     # General
@@ -3399,123 +3534,12 @@ class PowerMonitor:
         return is_acceptable_plan(active.name)
 </file>
 
-<file path="startup_manager.py">
-"""Windows startup items management via registry."""
-
-import os
-import sys
-import winreg
-from dataclasses import dataclass
-from typing import List
-
-STARTUP_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-
-@dataclass
-class StartupItem:
-    name: str
-    path: str
-    source: str  # "registry" or "startup_folder"
-
-
-def _get_startup_folder() -> str:
-    return os.path.join(
-        os.environ.get("APPDATA", ""),
-        r"Microsoft\Windows\Start Menu\Programs\Startup",
-    )
-
-
-def get_registry_items() -> List[StartupItem]:
-    """Get startup items from HKCU registry Run key."""
-    items = []
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REG_PATH)
-        i = 0
-        while True:
-            try:
-                name, value, _ = winreg.EnumValue(key, i)
-                items.append(StartupItem(name=name, path=value, source="registry"))
-                i += 1
-            except OSError:
-                break
-        winreg.CloseKey(key)
-    except OSError:
-        pass
-    return items
-
-
-def get_startup_folder_items() -> List[StartupItem]:
-    """Get startup items from the Startup folder (shortcuts)."""
-    items = []
-    folder = _get_startup_folder()
-    if not os.path.isdir(folder):
-        return items
-    for entry in os.listdir(folder):
-        path = os.path.join(folder, entry)
-        name = os.path.splitext(entry)[0]
-        if entry.lower().endswith((".lnk", ".url")):
-            items.append(StartupItem(name=name, path=path, source="startup_folder"))
-        elif os.path.isfile(path):
-            items.append(StartupItem(name=name, path=path, source="startup_folder"))
-    return items
-
-
-def get_all_items() -> List[StartupItem]:
-    """Get all startup items from both registry and startup folder."""
-    return get_registry_items() + get_startup_folder_items()
-
-
-def add_registry_startup(name: str, exe_path: str) -> bool:
-    """Add an entry to HKCU Run. Returns True on success."""
-    try:
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            STARTUP_REG_PATH,
-            0,
-            winreg.KEY_SET_VALUE,
-        )
-        winreg.SetValueEx(key, name, 0, winreg.REG_SZ, exe_path)
-        winreg.CloseKey(key)
-        return True
-    except OSError:
-        return False
-
-
-def remove_registry_startup(name: str) -> bool:
-    """Remove an entry from HKCU Run. Returns True on success."""
-    try:
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            STARTUP_REG_PATH,
-            0,
-            winreg.KEY_SET_VALUE,
-        )
-        winreg.DeleteValue(key, name)
-        winreg.CloseKey(key)
-        return True
-    except OSError:
-        return False
-
-
-def remove_startup_folder_item(name: str) -> bool:
-    """Remove a file from the startup folder. Returns True on success."""
-    folder = _get_startup_folder()
-    for entry in os.listdir(folder):
-        entry_name = os.path.splitext(entry)[0]
-        if entry_name == name:
-            try:
-                os.remove(os.path.join(folder, entry))
-                return True
-            except OSError:
-                return False
-    return False
-
-
-def get_app_exe_path() -> str:
-    """Get the path to the current executable or script."""
-    if getattr(sys, "frozen", False):
-        return sys.executable
-    return sys.argv[0]
+<file path="requirements.txt">
+customtkinter>=5.2.0
+pypinyin>=0.44.0
+pystray>=0.19.0
+Pillow>=9.0.0
+pyinstaller>=6.0.0
 </file>
 
 <file path="styles.py">
@@ -3731,14 +3755,6 @@ DEFAULT_STYLE = "Magic Dark"
 }
 </file>
 
-<file path="requirements.txt">
-customtkinter>=5.2.0
-pypinyin>=0.44.0
-pystray>=0.19.0
-Pillow>=9.0.0
-pyinstaller>=6.0.0
-</file>
-
 <file path="main.py">
 """
 PC System Auto Scripts — Power Plan Monitor & Startup Manager
@@ -3757,7 +3773,7 @@ from typing import Dict, List, Optional
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw
-from tkinter import filedialog, font as tkfont
+from tkinter import Menu, filedialog, font as tkfont
 
 from pypinyin import lazy_pinyin, Style
 from styles import STYLES, DEFAULT_STYLE, STYLE_ALIASES, DesignStyle
@@ -3804,6 +3820,8 @@ def load_config() -> dict:
             defaults.update(json.loads(CONFIG_FILE.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             pass
+    else:
+        save_config(defaults.copy())
     return defaults
 
 
@@ -4081,6 +4099,8 @@ class App(ctk.CTk):
         # Compact mode
         self._compact_mode = False
         self._compact_frame: Optional[ctk.CTkFrame] = None
+        self._full_geometry = "980x640"
+        self._compact_geometry = "360x170"
 
         # Column widths (fractions, sum ~1.0)
         self._col_widths = list(self.cfg.get("col_widths", COL_DEFAULTS))
@@ -4199,6 +4219,33 @@ class App(ctk.CTk):
     def _reg(self, widget, styler):
         """Register a widget for automatic restyling on theme switch."""
         self._stylables.append((widget, styler))
+
+    def _mode_button_text(self) -> str:
+        return self._i18n.t("compact.toggle") if not self._compact_mode else self._i18n.t("compact.full")
+
+    def _remember_geometry_for_mode(self):
+        geom = self.geometry()
+        if not geom or "x" not in geom:
+            return
+        if self._compact_mode:
+            self._compact_geometry = geom
+        else:
+            self._full_geometry = geom
+
+    def _apply_geometry_for_mode(self):
+        geom = self._compact_geometry if self._compact_mode else self._full_geometry
+        if geom:
+            try:
+                self.geometry(geom)
+            except Exception:
+                pass
+
+    def _update_mode_switch_texts(self):
+        text = self._mode_button_text()
+        if hasattr(self, "_compact_toggle_btn") and self._compact_toggle_btn.winfo_exists():
+            self._compact_toggle_btn.configure(text=text)
+        if hasattr(self, "_compact_full_btn") and self._compact_full_btn.winfo_exists():
+            self._compact_full_btn.configure(text=self._i18n.t("compact.full"))
 
     # ==================================================================
     # Sidebar
@@ -4404,13 +4451,11 @@ class App(ctk.CTk):
         self._appearance_label.configure(text=self._i18n.t("sidebar.appearance"))
         self._settings_label.configure(text=self._i18n.t("sidebar.settings"))
         self._tray_toggle_switch.configure(text=self._i18n.t("tray.minimize_to_tray"))
-        self._compact_toggle_btn.configure(text=self._i18n.t("compact.toggle") if not self._compact_mode else self._i18n.t("compact.full"))
+        self._update_mode_switch_texts()
         if hasattr(self, '_compact_title') and self._compact_title.winfo_exists():
             self._compact_title.configure(text="⚡ " + self._i18n.t("power.title"))
         if hasattr(self, '_compact_active_label') and self._compact_active_label.winfo_exists():
             self._compact_active_label.configure(text=self._i18n.t("power.active_plan") + ":")
-        if hasattr(self, '_compact_full_btn') and self._compact_full_btn.winfo_exists():
-            self._compact_full_btn.configure(text=self._i18n.t("compact.full"))
         if hasattr(self, '_compact_check_btn') and self._compact_check_btn.winfo_exists():
             self._compact_check_btn.configure(text=self._i18n.t("power.check_now"))
         if hasattr(self, '_compact_monitor_switch') and self._compact_monitor_switch.winfo_exists():
@@ -4428,6 +4473,9 @@ class App(ctk.CTk):
         fit_button_width(self._startup_add_btn, min_width=70, max_width=126)
         fit_button_width(self._startup_add_self_btn, min_width=92, max_width=160)
         fit_button_width(self._startup_remove_self_btn, min_width=92, max_width=170)
+        fit_button_width(self._compact_toggle_btn, min_width=74, max_width=110, padding=24)
+        if hasattr(self, '_compact_full_btn') and self._compact_full_btn.winfo_exists():
+            fit_button_width(self._compact_full_btn, min_width=82, max_width=124, padding=26)
         if self._sidebar_expanded:
             self._toggle_btn.configure(text="◀")
         else:
@@ -4474,6 +4522,7 @@ class App(ctk.CTk):
         apply_btn_secondary(self._compact_toggle_btn, s)
         self._compact_toggle_btn.pack(side="right")
         self._reg(self._compact_toggle_btn, apply_btn_secondary)
+        fit_button_width(self._compact_toggle_btn, min_width=74, max_width=110, padding=24)
 
         self._main_frame = main
         self._build_power_card()
@@ -4495,21 +4544,28 @@ class App(ctk.CTk):
             return
         if not self._sidebar_expanded:
             return
-        sidebar_w = self._sidebar.winfo_width()
-        if sidebar_w < 2:
-            sidebar_w = SIDEBAR_EXPANDED
-        new_w = self.winfo_width() - sidebar_w
-        if new_w > 100:
-            self._main_frame_ref.place_configure(x=sidebar_w)
-            self._main_frame_ref.configure(width=new_w)
+        self._relayout_main_frame()
 
     def _snap_main_to_sidebar(self):
-        """Position main content flush to sidebar edge, with fixed content width."""
-        sidebar_w = SIDEBAR_EXPANDED if self._sidebar_expanded else SIDEBAR_COLLAPSED
-        content_w = self.winfo_width() - SIDEBAR_EXPANDED
-        if content_w > 100:
-            self._main_frame_ref.place_configure(x=sidebar_w)
-            self._main_frame_ref.configure(width=content_w)
+        """Position main content flush to the sidebar edge."""
+        self._relayout_main_frame()
+
+    def _relayout_main_frame(self):
+        """Keep the main frame aligned with the sidebar's actual width."""
+        if not hasattr(self, "_main_frame_ref") or not self._main_frame_ref.winfo_exists():
+            return
+        if self._compact_mode:
+            return
+        sidebar_fallback = SIDEBAR_EXPANDED if self._sidebar_expanded else SIDEBAR_COLLAPSED
+        sidebar_w = sidebar_fallback
+        try:
+            if hasattr(self, "_sidebar") and self._sidebar.winfo_exists():
+                sidebar_w = max(self._sidebar.winfo_width(), sidebar_fallback)
+        except Exception:
+            sidebar_w = sidebar_fallback
+        total_w = self.winfo_width()
+        content_w = max(total_w - sidebar_w, 100)
+        self._main_frame_ref.place_configure(x=sidebar_w, y=0, relheight=1.0, width=content_w)
 
     def _on_window_configure(self, event):
         if event.widget != self:
@@ -4795,7 +4851,7 @@ class App(ctk.CTk):
     def _build_compact_view(self):
         """Build a compact card with only: style, target plan, interval, check."""
         s = self._style
-        frame = ctk.CTkFrame(self._main_frame, fg_color="transparent")
+        frame = ctk.CTkFrame(self, fg_color="transparent")
         self._compact_frame = frame
 
         # Compact card
@@ -4821,6 +4877,7 @@ class App(ctk.CTk):
         apply_btn_secondary(self._compact_full_btn, s)
         self._compact_full_btn.pack(side="right")
         self._reg(self._compact_full_btn, apply_btn_secondary)
+        fit_button_width(self._compact_full_btn, min_width=82, max_width=124, padding=26)
 
         self._compact_status_badge = ctk.CTkLabel(
             title_row, text="--", font=ctk.CTkFont(size=13, weight="bold"),
@@ -4848,61 +4905,77 @@ class App(ctk.CTk):
         self._compact_active_value.pack(fill="x", padx=12, pady=(0, 10))
         self._reg(self._compact_active_value, lambda w, s: w.configure(text_color=s.text_primary))
 
-        # Controls row
-        ctrl_row = ctk.CTkFrame(card, fg_color="transparent")
-        ctrl_row.pack(fill="x", padx=14, pady=(0, 14))
+        # Controls area split into two calmer cards
+        controls_row = ctk.CTkFrame(card, fg_color="transparent")
+        controls_row.pack(fill="x", padx=14, pady=(0, 14))
 
-        # Left: style dropdown
-        style_col = ctk.CTkFrame(ctrl_row, fg_color="transparent")
-        style_col.pack(side="left", fill="y", padx=(0, 12))
+        settings_panel = ctk.CTkFrame(controls_row)
+        apply_surface_corner(settings_panel, s)
+        settings_panel.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        self._reg(settings_panel, apply_surface_corner)
 
-        style_lbl = ctk.CTkLabel(
-            style_col, text=self._i18n.t("sidebar.appearance") + ":",
-            font=ctk.CTkFont(size=12), text_color=s.text_secondary, anchor="w")
-        style_lbl.pack(anchor="w", pady=(0, 2))
-        self._reg(style_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
+        actions_panel = ctk.CTkFrame(controls_row)
+        apply_surface_corner(actions_panel, s)
+        actions_panel.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        self._reg(actions_panel, apply_surface_corner)
+
+        settings_lbl = ctk.CTkLabel(
+            settings_panel, text=self._i18n.t("sidebar.appearance"),
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
+        settings_lbl.pack(fill="x", padx=12, pady=(10, 6))
+        self._reg(settings_lbl, lambda w, s: w.configure(text_color=s.text_primary))
 
         self._compact_style_dd = ctk.CTkOptionMenu(
-            style_col, values=list(STYLES.keys()), font=ctk.CTkFont(size=14),
-            height=30, width=140, command=self._switch_style)
+            settings_panel, values=list(STYLES.keys()), font=ctk.CTkFont(size=14),
+            height=30, width=150, command=self._switch_style)
         apply_dropdown(self._compact_style_dd, s)
         self._compact_style_dd.set(self.cfg["style"])
-        fit_option_width(self._compact_style_dd, list(STYLES.keys()), min_width=120, max_width=200)
-        self._compact_style_dd.pack(anchor="w")
+        fit_option_width(self._compact_style_dd, list(STYLES.keys()), min_width=124, max_width=190)
+        self._compact_style_dd.pack(fill="x", padx=12)
         self._reg(self._compact_style_dd, apply_dropdown)
         _make_dropdown_toggle(self._compact_style_dd)
 
-        # Middle: target + interval
-        mid_col = ctk.CTkFrame(ctrl_row, fg_color="transparent")
-        mid_col.pack(side="left", fill="y", padx=(0, 12))
-
         target_lbl = ctk.CTkLabel(
-            mid_col, text=self._i18n.t("power.target_plan") + ":",
-            font=ctk.CTkFont(size=12), text_color=s.text_secondary, anchor="w")
-        target_lbl.pack(anchor="w", pady=(0, 2))
-        self._reg(target_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
+            settings_panel, text=self._i18n.t("power.target_plan"),
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
+        target_lbl.pack(fill="x", padx=12, pady=(12, 6))
+        self._reg(target_lbl, lambda w, s: w.configure(text_color=s.text_primary))
 
         self._compact_target_dd = ctk.CTkOptionMenu(
-            mid_col, values=["Auto"], font=ctk.CTkFont(size=14),
+            settings_panel, values=["Auto"], font=ctk.CTkFont(size=14),
             height=30, width=160, dynamic_resizing=False,
             command=self._on_compact_target_changed)
         apply_dropdown(self._compact_target_dd, s)
-        self._compact_target_dd.pack(anchor="w")
+        self._compact_target_dd.pack(fill="x", padx=12, pady=(0, 12))
         self._reg(self._compact_target_dd, apply_dropdown)
         _make_dropdown_toggle(self._compact_target_dd)
 
-        int_row = ctk.CTkFrame(mid_col, fg_color="transparent", height=30)
-        int_row.pack(fill="x", pady=(10, 0))
-        int_row.pack_propagate(False)
+        actions_lbl = ctk.CTkLabel(
+            actions_panel, text=self._i18n.t("power.check_now"),
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
+        actions_lbl.pack(fill="x", padx=12, pady=(10, 6))
+        self._reg(actions_lbl, lambda w, s: w.configure(text_color=s.text_primary))
+
+        self._compact_check_btn = ctk.CTkButton(
+            actions_panel, text=self._i18n.t("power.check_now"),
+            height=40, font=ctk.CTkFont(size=14, weight="bold"),
+            command=lambda: [self._btn_press_flash(self._compact_check_btn), self._check_now()])
+        apply_btn_style(self._compact_check_btn, s)
+        self._compact_check_btn.pack(fill="x", padx=12)
+        self._reg(self._compact_check_btn, apply_btn_style)
+
+        interval_row = ctk.CTkFrame(actions_panel, fg_color="transparent", height=30)
+        interval_row.pack(fill="x", padx=12, pady=(10, 0))
+        interval_row.pack_propagate(False)
 
         int_lbl = ctk.CTkLabel(
-            int_row, text=self._i18n.t("power.interval") + ":",
-            font=ctk.CTkFont(size=12), text_color=s.text_secondary, width=64, anchor="w")
+            interval_row, text=self._i18n.t("power.interval"),
+            font=ctk.CTkFont(size=12), text_color=s.text_secondary, width=58, anchor="w")
         int_lbl.pack(side="left")
         self._reg(int_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
 
         self._compact_interval_entry = ctk.CTkEntry(
-            int_row, width=52, height=28, font=ctk.CTkFont(size=14))
+            interval_row, width=52, height=28, font=ctk.CTkFont(size=14))
         apply_entry(self._compact_interval_entry, s)
         self._compact_interval_entry.pack(side="left")
         self._compact_interval_entry.insert(0, str(self.cfg["check_interval"]))
@@ -4910,36 +4983,23 @@ class App(ctk.CTk):
         self._reg(self._compact_interval_entry, apply_entry)
 
         s_lbl = ctk.CTkLabel(
-            int_row, text=self._i18n.t("power.seconds"),
+            interval_row, text=self._i18n.t("power.seconds"),
             font=ctk.CTkFont(size=12), text_color=s.text_muted, width=18)
         s_lbl.pack(side="left", padx=(3, 6))
         self._reg(s_lbl, lambda w, s: w.configure(text_color=s.text_muted))
 
         self._compact_apply_btn = ctk.CTkButton(
-            int_row, text=self._i18n.t("general.apply"), width=50, height=28,
+            interval_row, text=self._i18n.t("general.apply"), width=54, height=28,
             font=ctk.CTkFont(size=12), command=self._apply_interval)
         apply_btn_style(self._compact_apply_btn, s)
         self._compact_apply_btn.pack(side="left")
         self._reg(self._compact_apply_btn, apply_btn_style)
 
-        # Right: check now
-        right_col = ctk.CTkFrame(ctrl_row, fg_color="transparent")
-        right_col.pack(side="right", fill="y")
-
-        self._compact_check_btn = ctk.CTkButton(
-            right_col, text=self._i18n.t("power.check_now"),
-            width=100, height=44, font=ctk.CTkFont(size=15, weight="bold"),
-            command=lambda: [self._btn_press_flash(self._compact_check_btn), self._check_now()])
-        apply_btn_style(self._compact_check_btn, s)
-        self._compact_check_btn.pack()
-        self._reg(self._compact_check_btn, apply_btn_style)
-
-        # Auto monitor switch
         self._compact_monitor_switch = ctk.CTkSwitch(
-            right_col, text=self._i18n.t("power.auto_monitor"),
+            actions_panel, text=self._i18n.t("power.auto_monitor"),
             font=ctk.CTkFont(size=12), command=self._toggle_monitor)
         apply_switch(self._compact_monitor_switch, s)
-        self._compact_monitor_switch.pack(pady=(10, 0))
+        self._compact_monitor_switch.pack(anchor="w", padx=12, pady=(10, 12))
         if self.cfg["monitor_enabled"]:
             self._compact_monitor_switch.select()
         self._reg(self._compact_monitor_switch, apply_switch)
@@ -4985,7 +5045,6 @@ class App(ctk.CTk):
         """Sync compact view labels with full-view state."""
         if self._compact_frame is None:
             return
-        s = self._style
         # Active plan
         self._compact_active_value.configure(text=self._power_active_value.cget("text"))
         # Status badge
@@ -4996,6 +5055,9 @@ class App(ctk.CTk):
         self._compact_result_label.configure(text=self._check_result_label.cget("text"))
         # Style dropdown
         self._compact_style_dd.set(self._style_dropdown.get())
+        # Target plan
+        if hasattr(self, "_compact_target_dd") and self._compact_target_dd.winfo_exists():
+            self._compact_target_dd.set(self._target_dropdown.get())
         # Interval
         self._compact_interval_entry.delete(0, "end")
         self._compact_interval_entry.insert(0, str(self.cfg["check_interval"]))
@@ -5004,12 +5066,27 @@ class App(ctk.CTk):
             self._compact_monitor_switch.select()
         else:
             self._compact_monitor_switch.deselect()
+        self._update_mode_switch_texts()
 
     def _toggle_compact_mode(self):
         """Switch between full window and compact power-only window."""
-        if self._compact_mode:
-            # Switch to full mode
-            self._compact_mode = False
+        self._set_compact_mode(not self._compact_mode)
+
+    def _set_compact_mode(self, compact: bool):
+        """Apply compact/full mode without rebuilding widgets."""
+        if self._compact_mode == compact:
+            self._update_mode_switch_texts()
+            return
+
+        self._remember_geometry_for_mode()
+        self._compact_mode = compact
+
+        if compact:
+            self._sidebar.pack_forget()
+            self._main_frame_ref.place_forget()
+            self._compact_frame.pack(fill="both", expand=True)
+            self.minsize(460, 380)
+        else:
             self._compact_frame.pack_forget()
             self._sidebar.pack(side="left", fill="y")
             self._sidebar.pack_propagate(False)
@@ -5018,21 +5095,222 @@ class App(ctk.CTk):
             else:
                 self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
             self._main_frame_ref.lift()
-            self._compact_toggle_btn.configure(text=self._i18n.t("compact.toggle"))
-            self.geometry("980x640")
             self.minsize(680, 480)
             self._snap_main_to_sidebar()
-        else:
-            # Switch to compact mode
-            self._compact_mode = True
+
+        self._update_mode_switch_texts()
+        self._apply_geometry_for_mode()
+        self._sync_compact_ui()
+        self._refresh_power_status()
+
+    def _build_compact_view(self):
+        """Build a tiny titlebar-free compact controller."""
+        s = self._style
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        self._compact_frame = frame
+
+        card = ctk.CTkFrame(frame)
+        apply_card(card, s)
+        card.pack(fill="both", expand=True, padx=4, pady=4)
+        self._reg(card, apply_card)
+
+        status_row = ctk.CTkFrame(card, fg_color="transparent", height=22)
+        status_row.pack(fill="x", padx=6, pady=(5, 2))
+        status_row.pack_propagate(False)
+
+        self._compact_active_value = ctk.CTkLabel(
+            status_row, text="--", font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=s.text_primary, anchor="w")
+        self._compact_active_value.pack(side="left", fill="x", expand=True)
+        self._reg(self._compact_active_value, lambda w, s: w.configure(text_color=s.text_primary))
+
+        self._compact_full_btn = ctk.CTkButton(
+            status_row, text=self._i18n.t("compact.full"), height=22,
+            font=ctk.CTkFont(size=10), command=self._toggle_compact_mode)
+        apply_btn_secondary(self._compact_full_btn, s)
+        self._compact_full_btn.pack(side="right")
+        self._reg(self._compact_full_btn, apply_btn_secondary)
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.pack(fill="x", padx=6, pady=(2, 4))
+
+        self._compact_plan_btn = ctk.CTkButton(
+            actions, text=self._i18n.t("compact.switch_power"), height=24,
+            font=ctk.CTkFont(size=10), command=self._show_compact_plan_menu)
+        apply_btn_style(self._compact_plan_btn, s)
+        self._compact_plan_btn.pack(fill="x", pady=(0, 4))
+        self._reg(self._compact_plan_btn, apply_btn_style)
+
+        self._compact_lang_btn = ctk.CTkButton(
+            actions, text=self._i18n.t("compact.switch_language"), height=24,
+            font=ctk.CTkFont(size=10), command=self._cycle_language)
+        apply_btn_secondary(self._compact_lang_btn, s)
+        self._compact_lang_btn.pack(fill="x", pady=(0, 4))
+        self._reg(self._compact_lang_btn, apply_btn_secondary)
+
+        self._compact_style_btn = ctk.CTkButton(
+            actions, text=self._i18n.t("compact.switch_style"), height=24,
+            font=ctk.CTkFont(size=10), command=self._cycle_style)
+        apply_btn_secondary(self._compact_style_btn, s)
+        self._compact_style_btn.pack(fill="x")
+        self._reg(self._compact_style_btn, apply_btn_secondary)
+
+        fit_button_width(self._compact_plan_btn, min_width=88, max_width=132, padding=14)
+        fit_button_width(self._compact_lang_btn, min_width=88, max_width=132, padding=14)
+        fit_button_width(self._compact_style_btn, min_width=88, max_width=132, padding=14)
+        fit_button_width(self._compact_full_btn, min_width=58, max_width=88, padding=10)
+
+        def _bind_drag(widget):
+            widget.bind("<ButtonPress-1>", self._start_compact_drag, add="+")
+            widget.bind("<B1-Motion>", self._drag_compact_window, add="+")
+            widget.bind("<ButtonRelease-1>", self._end_compact_drag, add="+")
+
+        for widget in (card, status_row, actions):
+            _bind_drag(widget)
+
+    def _show_compact_plan_menu(self):
+        """Open a popup menu for switching the active power plan."""
+        plans = get_all_plans()
+        if not plans or not hasattr(self, "_compact_plan_btn"):
+            return
+        menu = Menu(self, tearoff=0)
+        for p in plans:
+            label = p.name + (" \u2713" if p.is_active else "")
+            menu.add_command(label=label, command=lambda g=p.guid: self._do_switch_plan(g))
+        try:
+            x = self._compact_plan_btn.winfo_rootx()
+            y = self._compact_plan_btn.winfo_rooty() + self._compact_plan_btn.winfo_height()
+            self._compact_plan_menu = menu
+            menu.tk_popup(x, y)
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+
+    def _start_compact_drag(self, event):
+        if not self._compact_mode:
+            return
+        self._compact_drag_offset = (event.x_root - self.winfo_x(), event.y_root - self.winfo_y())
+
+    def _drag_compact_window(self, event):
+        if not self._compact_mode or not hasattr(self, "_compact_drag_offset"):
+            return
+        dx, dy = self._compact_drag_offset
+        self.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
+
+    def _end_compact_drag(self, event):
+        if self._compact_mode:
+            self._compact_geometry = self.geometry()
+
+    def _sync_compact_ui(self):
+        """Sync compact view labels with full-view state."""
+        if self._compact_frame is None:
+            return
+        self._compact_active_value.configure(text=self._power_active_value.cget("text"))
+        self._update_mode_switch_texts()
+
+    def _toggle_compact_mode(self):
+        """Switch between full window and compact power-control dashboard."""
+        self._set_compact_mode(not self._compact_mode)
+
+    def _set_compact_mode(self, compact: bool):
+        """Apply compact/full mode without rebuilding widgets."""
+        if self._compact_mode == compact:
+            self._update_mode_switch_texts()
+            return
+
+        self._remember_geometry_for_mode()
+        self._compact_mode = compact
+
+        if compact:
+            x, y = self.winfo_x(), self.winfo_y()
+            self._compact_geometry = f"260x168+{max(0, x)}+{max(0, y)}"
             self._sidebar.pack_forget()
             self._main_frame_ref.place_forget()
             self._compact_frame.pack(fill="both", expand=True)
-            self._compact_toggle_btn.configure(text=self._i18n.t("compact.full"))
-            self.geometry("520x420")
-            self.minsize(460, 380)
-            self._sync_compact_ui()
-            self._refresh_power_status()
+            self._compact_frame.lift()
+            self.overrideredirect(True)
+            self.resizable(False, False)
+            self.minsize(260, 168)
+            self.geometry(self._compact_geometry)
+        else:
+            self.overrideredirect(False)
+            self.resizable(True, True)
+            self._compact_frame.pack_forget()
+            self._sidebar.pack(side="left", fill="y")
+            self._sidebar.pack_propagate(False)
+            if self._sidebar_expanded:
+                self._main_frame_ref.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
+            else:
+                self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
+            self._main_frame_ref.lift()
+            self.minsize(680, 480)
+
+        self._update_mode_switch_texts()
+        self._apply_geometry_for_mode()
+        if not compact:
+            self.update_idletasks()
+            self._relayout_main_frame()
+            self.after(0, self._relayout_main_frame)
+        self._sync_compact_ui()
+        self._refresh_power_status()
+
+    def _refresh_all_text(self):
+        self.title(self._i18n.t("app.title"))
+        self._header_title_label.configure(text=self._i18n.t("app.title"))
+        self._power_title_label.configure(text="\u26a1 " + self._i18n.t("power.title"))
+        self._power_target_label.configure(text=self._i18n.t("power.target_plan") + ":")
+        self._power_interval_label.configure(text=self._i18n.t("power.interval") + ":")
+        self._power_interval_suffix.configure(text=self._i18n.t("power.seconds"))
+        self._apply_interval_btn.configure(text=self._i18n.t("general.apply"))
+        self._check_btn.configure(text=self._i18n.t("power.check_now"))
+        self._monitor_switch.configure(text=self._i18n.t("power.auto_monitor"))
+        self._startup_title_label.configure(text=self._i18n.t("startup.title"))
+        self._startup_name_entry.configure(placeholder_text=self._i18n.t("startup.name_placeholder"))
+        self._startup_path_entry.configure(placeholder_text=self._i18n.t("startup.path_placeholder"))
+        self._startup_add_btn.configure(text=self._i18n.t("startup.add_btn"))
+        self._startup_add_self_btn.configure(text=self._i18n.t("startup.add_self_btn"))
+        self._startup_remove_self_btn.configure(text=self._i18n.t("startup.remove_self_btn"))
+        self._startup_refresh_btn.configure(text=self._i18n.t("startup.refresh_btn"))
+        self._appearance_label.configure(text=self._i18n.t("sidebar.appearance"))
+        self._settings_label.configure(text=self._i18n.t("sidebar.settings"))
+        self._tray_toggle_switch.configure(text=self._i18n.t("tray.minimize_to_tray"))
+        self._update_mode_switch_texts()
+        if hasattr(self, "_compact_plan_btn") and self._compact_plan_btn.winfo_exists():
+            self._compact_plan_btn.configure(text=self._i18n.t("compact.switch_power"))
+        if hasattr(self, "_compact_lang_btn") and self._compact_lang_btn.winfo_exists():
+            self._compact_lang_btn.configure(text=self._i18n.t("compact.switch_language"))
+        if hasattr(self, "_compact_style_btn") and self._compact_style_btn.winfo_exists():
+            self._compact_style_btn.configure(text=self._i18n.t("compact.switch_style"))
+        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=118,
+                         max_width=SIDEBAR_EXPANDED - 24)
+        fit_option_width(self._lang_dropdown, [LANG_LABELS[l] for l in SUPPORTED_LANGS],
+                         min_width=96, max_width=SIDEBAR_EXPANDED - 24)
+        fit_entry_width(self._interval_entry, min_width=52, max_width=92, padding=30)
+        fit_entry_width(self._startup_name_entry, min_width=112, max_width=190, padding=34)
+        fit_entry_width(self._startup_path_entry, min_width=180, max_width=430, padding=38)
+        fit_button_width(self._apply_interval_btn, min_width=56, max_width=96)
+        fit_button_width(self._check_btn, min_width=92, max_width=180)
+        fit_button_width(self._startup_refresh_btn, min_width=62, max_width=120)
+        fit_button_width(self._startup_add_btn, min_width=70, max_width=126)
+        fit_button_width(self._startup_add_self_btn, min_width=92, max_width=160)
+        fit_button_width(self._startup_remove_self_btn, min_width=92, max_width=170)
+        if hasattr(self, "_compact_plan_btn") and self._compact_plan_btn.winfo_exists():
+            fit_button_width(self._compact_plan_btn, min_width=88, max_width=132, padding=14)
+        if hasattr(self, "_compact_lang_btn") and self._compact_lang_btn.winfo_exists():
+            fit_button_width(self._compact_lang_btn, min_width=88, max_width=132, padding=14)
+        if hasattr(self, "_compact_style_btn") and self._compact_style_btn.winfo_exists():
+            fit_button_width(self._compact_style_btn, min_width=88, max_width=132, padding=14)
+        if hasattr(self, "_compact_full_btn") and self._compact_full_btn.winfo_exists():
+            fit_button_width(self._compact_full_btn, min_width=58, max_width=88, padding=10)
+        if self._sidebar_expanded:
+            self._toggle_btn.configure(text="\u25c0")
+        else:
+            self._toggle_btn.configure(text="\u25b6")
+        self._update_sort_indicator()
+        self._refresh_power_status()
+        self._refresh_startup_list()
 
     # ==================================================================
     # Column header layout & resize
@@ -5391,10 +5669,8 @@ class App(ctk.CTk):
             self._power_active_value.configure(text=self._i18n.t("power.unable_detect"))
             self._power_status_badge.configure(
                 text=self._i18n.t("power.status_error"), text_color=s.error)
-            if self._compact_mode:
+            if self._compact_mode and hasattr(self, "_compact_active_value") and self._compact_active_value.winfo_exists():
                 self._compact_active_value.configure(text=self._i18n.t("power.unable_detect"))
-                self._compact_status_badge.configure(
-                    text=self._i18n.t("power.status_error"), text_color=s.error)
             return
         self._power_active_value.configure(text=active.name)
 
@@ -5416,9 +5692,8 @@ class App(ctk.CTk):
         self._rebuild_tray_menu()
 
         # Sync compact view
-        if self._compact_mode:
+        if self._compact_mode and hasattr(self, "_compact_active_value") and self._compact_active_value.winfo_exists():
             self._compact_active_value.configure(text=active.name)
-            self._compact_status_badge.configure(text=txt, text_color=clr)
 
     def _do_switch_plan(self, guid: str):
         """Switch to the given power plan guid."""
@@ -5497,8 +5772,9 @@ class App(ctk.CTk):
             msg = msg[:57] + "..."
         self._check_result_label.configure(
             text=msg, text_color=colors.get(kind, self._style.text_secondary))
-        if hasattr(self, '_compact_result_label') and self._compact_result_label.winfo_exists():
-            self._compact_result_label.configure(
+        compact_result = getattr(self, "_compact_result_label", None)
+        if compact_result is not None and compact_result.winfo_exists():
+            compact_result.configure(
                 text=msg, text_color=colors.get(kind, self._style.text_secondary))
         if not persistent:
             self._status_bar.configure(
@@ -5536,21 +5812,22 @@ class App(ctk.CTk):
         self._syncing_monitor_switch = True
         try:
             main_on = self._monitor_switch.get()
-            compact_on = (hasattr(self, '_compact_monitor_switch')
-                          and self._compact_monitor_switch.winfo_exists()
-                          and self._compact_monitor_switch.get())
+            compact_switch = getattr(self, "_compact_monitor_switch", None)
+            compact_on = (compact_switch is not None
+                          and compact_switch.winfo_exists()
+                          and compact_switch.get())
             if main_on or compact_on:
                 self._start_monitor()
             else:
                 self._stop_monitor()
             if self._monitor_running:
                 self._monitor_switch.select()
-                if hasattr(self, '_compact_monitor_switch') and self._compact_monitor_switch.winfo_exists():
-                    self._compact_monitor_switch.select()
+                if compact_switch is not None and compact_switch.winfo_exists():
+                    compact_switch.select()
             else:
                 self._monitor_switch.deselect()
-                if hasattr(self, '_compact_monitor_switch') and self._compact_monitor_switch.winfo_exists():
-                    self._compact_monitor_switch.deselect()
+                if compact_switch is not None and compact_switch.winfo_exists():
+                    compact_switch.deselect()
         finally:
             self._syncing_monitor_switch = False
 

@@ -21,7 +21,6 @@ from pypinyin import lazy_pinyin, Style
 from styles import STYLES, DEFAULT_STYLE, STYLE_ALIASES, DesignStyle
 from power_manager import (
     PowerMonitor,
-    get_active_plan,
     get_all_plans,
     is_acceptable_plan,
 )
@@ -29,7 +28,10 @@ from startup_manager import (
     get_all_items,
     add_registry_startup,
     remove_registry_startup,
+    remove_registry_startup_by_source,
     remove_startup_folder_item,
+    remove_startup_folder_item_by_source,
+    open_startup_location,
     get_app_exe_path,
     StartupItem,
 )
@@ -55,7 +57,7 @@ def load_config() -> dict:
         "target_guid": "",
         "minimize_to_tray": True,
         "start_to_tray": True,
-        "col_widths": [0.28, 0.56, 0.08, 0.08],
+        "col_widths": [0.24, 0.43, 0.12, 0.18],
     }
     if CONFIG_FILE.exists():
         try:
@@ -147,7 +149,7 @@ def _create_tray_icon(color_hex: str = "#5e6ad2"):
 SIDEBAR_EXPANDED = 210
 SIDEBAR_COLLAPSED = 60
 COL_KEYS = ["name", "path", "source", "action"]
-COL_DEFAULTS = [0.28, 0.56, 0.08, 0.08]
+COL_DEFAULTS = [0.24, 0.43, 0.12, 0.18]
 COL_MIN = 0.04
 HANDLE_WIDTH = 4
 ROW_HEIGHT = 26
@@ -337,6 +339,8 @@ class App(ctk.CTk):
         # Sort state for startup list
         self._sort_key: str = "name"
         self._sort_ascending: bool = True
+        self._startup_source_filter = "all"
+        self._source_filter_label_to_key: Dict[str, str] = {}
 
         # Compact mode
         self._compact_mode = False
@@ -347,6 +351,8 @@ class App(ctk.CTk):
         # Column widths (fractions, sum ~1.0)
         self._col_widths = list(self.cfg.get("col_widths", COL_DEFAULTS))
         if len(self._col_widths) != 4:
+            self._col_widths = list(COL_DEFAULTS)
+        elif self._col_widths[3] < 0.14:
             self._col_widths = list(COL_DEFAULTS)
         self._resizing_col: int = -1
         self._resize_start_x: int = 0
@@ -359,6 +365,14 @@ class App(ctk.CTk):
         self._stylables: List[tuple] = []
         # Track startup item → row widget for surgical removal
         self._item_rows: Dict[str, ctk.CTkFrame] = {}
+        self._startup_items_cache: List[StartupItem] = []
+        self._startup_sources_cache: List[str] = []
+        self._startup_refresh_seq = 0
+        self._startup_refresh_running = False
+        self._startup_refresh_pending = False
+        self._relayout_rows_after_id = None
+        self._power_refresh_running = False
+        self._power_refresh_pending = False
 
         self.power_monitor = PowerMonitor(
             on_status_change=self._on_power_status_change,
@@ -690,6 +704,7 @@ class App(ctk.CTk):
         self._startup_add_self_btn.configure(text=self._i18n.t("startup.add_self_btn"))
         self._startup_remove_self_btn.configure(text=self._i18n.t("startup.remove_self_btn"))
         self._startup_refresh_btn.configure(text=self._i18n.t("startup.refresh_btn"))
+        self._update_source_filter_dropdown()
         self._appearance_label.configure(text=self._i18n.t("sidebar.appearance"))
         self._settings_label.configure(text=self._i18n.t("sidebar.settings"))
         self._tray_toggle_switch.configure(text=self._i18n.t("tray.minimize_to_tray"))
@@ -732,7 +747,8 @@ class App(ctk.CTk):
 
     def _build_main_content(self):
         s = self._style
-        main = ctk.CTkFrame(self, fg_color="transparent")
+        main = ctk.CTkFrame(self, fg_color="transparent",
+                            width=980 - SIDEBAR_EXPANDED)
         self._main_frame_ref = main
         main.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
         self.bind("<Configure>", self._on_root_configure, add="+")
@@ -807,7 +823,8 @@ class App(ctk.CTk):
             sidebar_w = sidebar_fallback
         total_w = self.winfo_width()
         content_w = max(total_w - sidebar_w, 100)
-        self._main_frame_ref.place_configure(x=sidebar_w, y=0, relheight=1.0, width=content_w)
+        self._main_frame_ref.configure(width=content_w)
+        self._main_frame_ref.place_configure(x=sidebar_w, y=0, relheight=1.0)
 
     def _on_window_configure(self, event):
         if event.widget != self:
@@ -817,7 +834,7 @@ class App(ctk.CTk):
             if w > 10:
                 self._header_width = w
                 self._relayout_header()
-                self._relayout_all_rows()
+                self._schedule_relayout_all_rows()
 
     # ==================================================================
     # Power plan card
@@ -980,6 +997,17 @@ class App(ctk.CTk):
         self._startup_refresh_btn.pack(side="right")
         self._reg(self._startup_refresh_btn, apply_btn_secondary)
 
+        self._source_filter_dropdown = ctk.CTkOptionMenu(
+            title_row, values=[self._i18n.t("startup.source_all")],
+            font=ctk.CTkFont(size=12), height=24, dynamic_resizing=False,
+            command=self._on_source_filter_changed)
+        apply_dropdown(self._source_filter_dropdown, s)
+        _make_dropdown_toggle(self._source_filter_dropdown)
+        fit_option_width(self._source_filter_dropdown, [self._i18n.t("startup.source_all")],
+                         min_width=96, max_width=170, padding=28)
+        self._source_filter_dropdown.pack(side="right", padx=(0, 6))
+        self._reg(self._source_filter_dropdown, apply_dropdown)
+
         # --- Add row ---
         add_row = ctk.CTkFrame(card)
         apply_surface_corner(add_row, s)
@@ -1069,6 +1097,7 @@ class App(ctk.CTk):
             else:
                 self._col_header_widgets[key] = (lbl, None, None)
 
+        self._update_sort_indicator()
         self._relayout_header()
 
         # --- Scrollable list ---
@@ -1333,8 +1362,10 @@ class App(ctk.CTk):
             self._sidebar.pack(side="left", fill="y")
             self._sidebar.pack_propagate(False)
             if self._sidebar_expanded:
+                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_EXPANDED, 100))
                 self._main_frame_ref.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
             else:
+                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_COLLAPSED, 100))
                 self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
             self._main_frame_ref.lift()
             self.minsize(680, 480)
@@ -1483,8 +1514,10 @@ class App(ctk.CTk):
             self._sidebar.pack(side="left", fill="y")
             self._sidebar.pack_propagate(False)
             if self._sidebar_expanded:
+                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_EXPANDED, 100))
                 self._main_frame_ref.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
             else:
+                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_COLLAPSED, 100))
                 self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
             self._main_frame_ref.lift()
             self.minsize(680, 480)
@@ -1515,6 +1548,7 @@ class App(ctk.CTk):
         self._startup_add_self_btn.configure(text=self._i18n.t("startup.add_self_btn"))
         self._startup_remove_self_btn.configure(text=self._i18n.t("startup.remove_self_btn"))
         self._startup_refresh_btn.configure(text=self._i18n.t("startup.refresh_btn"))
+        self._update_source_filter_dropdown()
         self._appearance_label.configure(text=self._i18n.t("sidebar.appearance"))
         self._settings_label.configure(text=self._i18n.t("sidebar.settings"))
         self._tray_toggle_switch.configure(text=self._i18n.t("tray.minimize_to_tray"))
@@ -1563,7 +1597,7 @@ class App(ctk.CTk):
         if w > 10:
             self._header_width = w
             self._relayout_header()
-            self._relayout_all_rows()
+            self._schedule_relayout_all_rows()
 
     def _relayout_header(self):
         w = max(self._header_width, 50)
@@ -1606,6 +1640,18 @@ class App(ctk.CTk):
         self.cfg["col_widths"] = list(self._col_widths)
         save_config(self.cfg)
 
+    def _schedule_relayout_all_rows(self, delay_ms: int = 35):
+        if self._relayout_rows_after_id is not None:
+            try:
+                self.after_cancel(self._relayout_rows_after_id)
+            except Exception:
+                pass
+        self._relayout_rows_after_id = self.after(delay_ms, self._run_scheduled_relayout)
+
+    def _run_scheduled_relayout(self):
+        self._relayout_rows_after_id = None
+        self._relayout_all_rows()
+
     def _relayout_all_rows(self):
         offset = 0.02
         col_w = self._col_widths
@@ -1634,6 +1680,44 @@ class App(ctk.CTk):
     @staticmethod
     def _make_item_key(item: StartupItem) -> str:
         return f"{item.source}:{item.name}"
+
+    def _startup_source_labels(self) -> Dict[str, str]:
+        return {
+            "registry": self._i18n.t("startup.source_registry"),
+            "registry_hklm": self._i18n.t("startup.source_registry_hklm"),
+            "registry_hklm_wow6432": self._i18n.t("startup.source_registry_hklm_wow6432"),
+            "startup_folder": self._i18n.t("startup.source_startup_folder"),
+            "startup_folder_common": self._i18n.t("startup.source_startup_folder_common"),
+        }
+
+    def _format_startup_source(self, source: str) -> str:
+        return self._startup_source_labels().get(source, source)
+
+    def _update_source_filter_dropdown(self, sources=None):
+        if not hasattr(self, "_source_filter_dropdown") or not self._source_filter_dropdown.winfo_exists():
+            return
+        source_labels = self._startup_source_labels()
+        source_keys = list(sources or source_labels.keys())
+        if self._startup_source_filter not in source_keys and self._startup_source_filter != "all":
+            source_keys.append(self._startup_source_filter)
+        source_keys = sorted(set(source_keys), key=lambda key: source_labels.get(key, key))
+        labels = [self._i18n.t("startup.source_all")] + [source_labels.get(key, key) for key in source_keys]
+        self._source_filter_label_to_key = {labels[0]: "all"}
+        self._source_filter_label_to_key.update({
+            source_labels.get(key, key): key for key in source_keys
+        })
+        self._source_filter_dropdown.configure(values=labels)
+        selected = labels[0] if self._startup_source_filter == "all" else source_labels.get(
+            self._startup_source_filter, self._startup_source_filter)
+        self._source_filter_dropdown.set(selected if selected in labels else labels[0])
+        fit_option_width(self._source_filter_dropdown, labels, min_width=96, max_width=180, padding=28)
+
+    def _on_source_filter_changed(self, label: str):
+        self._startup_source_filter = self._source_filter_label_to_key.get(label, "all")
+        if self._startup_items_cache:
+            self._render_startup_items(self._sorted_startup_items())
+        else:
+            self._refresh_startup_list()
 
     def _create_startup_row(self, item: StartupItem) -> ctk.CTkFrame:
         s = self._style
@@ -1666,31 +1750,74 @@ class App(ctk.CTk):
         self._reg(path_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
 
         # Source
-        src_lbl = ctk.CTkLabel(row, text=item.source, font=ctk.CTkFont(size=13),
+        src_lbl = ctk.CTkLabel(row, text=self._format_startup_source(item.source),
+                               font=ctk.CTkFont(size=13),
                                text_color=s.text_muted, anchor="center")
         self._reg(src_lbl, lambda w, s: w.configure(text_color=s.text_muted))
 
-        # Remove btn
+        # Action buttons
+        action_frame = ctk.CTkFrame(row, fg_color="transparent")
+
+        open_btn = ctk.CTkButton(
+            action_frame, text=self._i18n.t("startup.location_btn"), width=42, height=20,
+            font=ctk.CTkFont(size=12),
+            fg_color=s.card_elevated, hover_color=s.accent,
+            text_color=s.text_secondary, corner_radius=3,
+            command=lambda it=item: self._open_startup_location(it))
+        open_btn.pack(side="left", padx=(0, 4))
+        self._reg(open_btn, lambda w, s: w.configure(
+            fg_color=s.card_elevated, hover_color=s.accent,
+            text_color=s.text_secondary))
+
         remove_btn = ctk.CTkButton(
-            row, text=self._i18n.t("startup.remove_btn"), width=40, height=20,
+            action_frame, text=self._i18n.t("startup.remove_btn"), width=34, height=20,
             font=ctk.CTkFont(size=12),
             fg_color=s.card_elevated, hover_color=s.error,
             text_color=s.text_secondary, corner_radius=3,
             command=lambda it=item: self._remove_startup_item(it))
+        remove_btn.pack(side="left")
         self._reg(remove_btn, lambda w, s: w.configure(
             fg_color=s.card_elevated, hover_color=s.error,
             text_color=s.text_secondary))
         return row
 
+    def _sorted_startup_items(self, items: Optional[List[StartupItem]] = None) -> List[StartupItem]:
+        source_labels = self._startup_source_labels()
+        source_filter = self._startup_source_filter
+        sort_key = self._sort_key
+        reverse = not self._sort_ascending
+        base_items = list(self._startup_items_cache if items is None else items)
+        filtered = [
+            item for item in base_items
+            if source_filter == "all" or item.source == source_filter
+        ]
+
+        def _sort_value(item: StartupItem) -> str:
+            if sort_key == "source":
+                return source_labels.get(item.source, item.source)
+            return getattr(item, sort_key, "")
+
+        return sorted(
+            filtered,
+            key=lambda it: ''.join(lazy_pinyin(_sort_value(it), style=Style.TONE3)),
+            reverse=reverse,
+        )
+
     def _toggle_sort(self, key: str):
         """Toggle sort direction when clicking a sortable column header."""
+        if key not in ("name", "source"):
+            return
         if self._sort_key == key:
             self._sort_ascending = not self._sort_ascending
         else:
             self._sort_key = key
             self._sort_ascending = True
         self._update_sort_indicator()
-        self._refresh_startup_list()
+        self.update_idletasks()
+        if self._startup_items_cache:
+            self._render_startup_items(self._sorted_startup_items())
+        else:
+            self._refresh_startup_list()
 
     def _update_sort_indicator(self):
         """Update column header labels to show sort direction (▲/▼)."""
@@ -1705,18 +1832,73 @@ class App(ctk.CTk):
                 lbl_text = base
             lbl.configure(text=lbl_text)
 
+    def _update_sort_indicator(self):
+        """Update sortable column labels to show direction beside the text."""
+        col_i18n = {"name": "startup.col_name", "path": "startup.col_path",
+                     "source": "startup.col_source", "action": "startup.col_action"}
+        for key, (lbl, _, _) in self._col_header_widgets.items():
+            base = self._i18n.t(col_i18n.get(key, key))
+            if key == self._sort_key:
+                arrow = " ↑" if self._sort_ascending else " ↓"
+                lbl.configure(text=base + arrow)
+            else:
+                lbl.configure(text=base)
+
+    def _update_sort_indicator(self):
+        """Update sortable column labels to show direction beside the text."""
+        col_i18n = {"name": "startup.col_name", "path": "startup.col_path",
+                     "source": "startup.col_source", "action": "startup.col_action"}
+        for key, (lbl, _, _) in self._col_header_widgets.items():
+            base = self._i18n.t(col_i18n.get(key, key))
+            if key == self._sort_key:
+                arrow = " " + (chr(0x2191) if self._sort_ascending else chr(0x2193))
+                lbl.configure(text=base + arrow)
+            else:
+                lbl.configure(text=base)
+
     def _refresh_startup_list(self):
+        self._startup_refresh_seq += 1
+        seq = self._startup_refresh_seq
+        if self._startup_refresh_running:
+            self._startup_refresh_pending = True
+            return
+
+        self._startup_refresh_running = True
+        source_labels = self._startup_source_labels()
+
+        def _load():
+            try:
+                all_items = get_all_items()
+                sources = sorted({item.source for item in all_items},
+                                 key=lambda key: source_labels.get(key, key))
+            except Exception:
+                all_items = []
+                sources = []
+            self.after(0, lambda: self._finish_startup_refresh(seq, all_items, sources))
+
+        threading.Thread(target=_load, daemon=True).start()
+
+    def _finish_startup_refresh(self, seq: int, items: List[StartupItem], sources=None):
+        stale = seq != self._startup_refresh_seq
+        self._startup_refresh_running = False
+        if self._startup_refresh_pending:
+            self._startup_refresh_pending = False
+            self._refresh_startup_list()
+            return
+        if stale:
+            return
+        self._update_source_filter_dropdown(sources)
+        self._startup_items_cache = list(items)
+        self._startup_sources_cache = list(sources or [])
+        self._render_startup_items(self._sorted_startup_items(items))
+
+    def _render_startup_items(self, items: List[StartupItem]):
         for w in self._startup_list_frame.winfo_children():
             w.destroy()
         self._table_rows.clear()
         self._item_rows.clear()
         # Clean stale startup row registrations from _stylables
         self._stylables = [(w, fn) for w, fn in self._stylables if w.winfo_exists()]
-
-        items = get_all_items()
-        items.sort(key=lambda it: ''.join(
-            lazy_pinyin(getattr(it, self._sort_key, ""), style=Style.TONE3)
-        ), reverse=not self._sort_ascending)
         self._startup_count_label.configure(
             text=f"{len(items)}{self._i18n.t('startup.entries')}")
 
@@ -1725,7 +1907,7 @@ class App(ctk.CTk):
                                  text=self._i18n.t("startup.empty"),
                                  font=ctk.CTkFont(size=14), text_color=self._style.text_muted)
             empty.pack(pady=16)
-            self._update_self_buttons()
+            self._update_self_buttons(items)
             return
 
         for item in items:
@@ -1734,7 +1916,7 @@ class App(ctk.CTk):
             self._item_rows[self._make_item_key(item)] = row
 
         self._relayout_all_rows()
-        self._update_self_buttons()
+        self._update_self_buttons(items)
 
     # ==================================================================
     # Startup CRUD
@@ -1778,10 +1960,13 @@ class App(ctk.CTk):
     def _remove_self_from_startup(self):
         if remove_registry_startup("PC_System_Auto_Scripts"):
             key = "registry:PC_System_Auto_Scripts"
+            self._startup_items_cache = [
+                cached for cached in self._startup_items_cache
+                if self._make_item_key(cached) != key
+            ]
             row = self._item_rows.pop(key, None)
             if row is not None and row.winfo_exists():
-                children_ids = {id(c) for c in row.winfo_children()}
-                children_ids.add(id(row))
+                children_ids = self._collect_widget_ids(row)
                 self._stylables = [(w, fn) for w, fn in self._stylables
                                    if id(w) not in children_ids]
                 if row in self._table_rows:
@@ -1802,14 +1987,15 @@ class App(ctk.CTk):
         else:
             self._show_check_result(self._i18n.t("startup.remove_failed", name="PC_System_Auto_Scripts"), "error")
 
-    def _has_self_in_startup(self) -> bool:
+    def _has_self_in_startup(self, items=None) -> bool:
+        items = items if items is not None else get_all_items()
         return any(
             item.name == "PC_System_Auto_Scripts" and item.source == "registry"
-            for item in get_all_items()
+            for item in items
         )
 
-    def _update_self_buttons(self):
-        if self._has_self_in_startup():
+    def _update_self_buttons(self, items=None):
+        if self._has_self_in_startup(items):
             self._startup_add_self_btn.pack_forget()
             self._startup_remove_self_btn.pack(side="left", padx=(0, 10), pady=10)
         else:
@@ -1817,6 +2003,16 @@ class App(ctk.CTk):
             self._startup_add_self_btn.pack(side="left", padx=(0, 10), pady=10)
 
     def _surgically_add_row(self, item: StartupItem):
+        item_key = self._make_item_key(item)
+        self._startup_items_cache = [
+            cached for cached in self._startup_items_cache
+            if self._make_item_key(cached) != item_key
+        ]
+        self._startup_items_cache.append(item)
+        if item.source not in self._startup_sources_cache:
+            self._startup_sources_cache.append(item.source)
+            self._update_source_filter_dropdown(self._startup_sources_cache)
+
         # Remove empty-state label if present
         if not self._table_rows:
             for w in self._startup_list_frame.winfo_children():
@@ -1829,16 +2025,35 @@ class App(ctk.CTk):
             text=f"{len(self._table_rows)}{self._i18n.t('startup.entries')}")
         self._relayout_all_rows()
 
+    def _open_startup_location(self, item: StartupItem):
+        if open_startup_location(item):
+            self._show_check_result(self._i18n.t("startup.opened_location", name=item.name), "ok")
+        else:
+            self._show_check_result(self._i18n.t("startup.open_location_failed", name=item.name), "error")
+
+    def _collect_widget_ids(self, widget) -> set:
+        ids = {id(widget)}
+        for child in widget.winfo_children():
+            ids.update(self._collect_widget_ids(child))
+        return ids
+
     def _remove_startup_item(self, item: StartupItem):
-        ok = (remove_registry_startup(item.name) if item.source == "registry"
-              else remove_startup_folder_item(item.name))
+        if item.source.startswith("registry"):
+            ok = remove_registry_startup_by_source(item.name, item.source)
+        elif item.source.startswith("startup_folder"):
+            ok = remove_startup_folder_item_by_source(item.name, item.source)
+        else:
+            ok = False
         if ok:
             key = self._make_item_key(item)
+            self._startup_items_cache = [
+                cached for cached in self._startup_items_cache
+                if self._make_item_key(cached) != key
+            ]
             row = self._item_rows.pop(key, None)
             if row is not None and row.winfo_exists():
                 # Remove row's widgets from _stylables
-                children_ids = {id(c) for c in row.winfo_children()}
-                children_ids.add(id(row))
+                children_ids = self._collect_widget_ids(row)
                 self._stylables = [(w, fn) for w, fn in self._stylables
                                    if id(w) not in children_ids]
                 if row in self._table_rows:
@@ -1866,14 +2081,32 @@ class App(ctk.CTk):
     # ==================================================================
 
     def _refresh_power_status(self):
+        if self._power_refresh_running:
+            self._power_refresh_pending = True
+            return
+        self._power_refresh_running = True
+
         def _check():
-            active = get_active_plan()
-            self.after(0, lambda: self._update_power_ui(active))
-            self.after(0, self._refresh_target_dropdown_items)
+            try:
+                plans = get_all_plans()
+                active = next((p for p in plans if p.is_active), None)
+            except Exception:
+                plans = []
+                active = None
+            self.after(0, lambda: self._finish_power_refresh(active, plans))
         threading.Thread(target=_check, daemon=True).start()
 
-    def _refresh_target_dropdown_items(self):
-        plans = get_all_plans()
+    def _finish_power_refresh(self, active, plans: List):
+        self._power_refresh_running = False
+        self._update_power_ui(active, plans)
+        self._refresh_target_dropdown_items(plans)
+        if self._power_refresh_pending:
+            self._power_refresh_pending = False
+            self._refresh_power_status()
+
+    def _refresh_target_dropdown_items(self, plans=None):
+        if plans is None:
+            plans = get_all_plans()
         if not plans:
             return
         current = self._target_dropdown.get()
@@ -1905,7 +2138,7 @@ class App(ctk.CTk):
         if self._compact_mode:
             self._populate_compact_target_dropdown()
 
-    def _update_power_ui(self, active):
+    def _update_power_ui(self, active, plans=None):
         s = self._style
         if active is None:
             self._power_active_value.configure(text=self._i18n.t("power.unable_detect"))
@@ -1931,7 +2164,7 @@ class App(ctk.CTk):
         self._power_status_badge.configure(text=txt, text_color=clr)
         if prev and prev != txt:
             self._status_pulse(self._power_status_badge, clr)
-        self._rebuild_tray_menu()
+        self._rebuild_tray_menu(plans)
 
         # Sync compact view
         if self._compact_mode and hasattr(self, "_compact_active_value") and self._compact_active_value.winfo_exists():
@@ -2124,7 +2357,7 @@ class App(ctk.CTk):
         except Exception:
             return False
 
-    def _rebuild_tray_menu(self):
+    def _rebuild_tray_menu(self, plans=None):
         """Rebuild the tray menu to reflect current power plan state."""
         if self._tray_icon is None:
             return
@@ -2148,7 +2381,8 @@ class App(ctk.CTk):
                         self.after(0, lambda g=p.guid: self._do_switch_plan(g))
                         break
 
-            plans = get_all_plans()
+            if plans is None:
+                plans = get_all_plans()
             plan_items = []
             for p in plans:
                 label = p.name + ("  ✓" if p.is_active else "")

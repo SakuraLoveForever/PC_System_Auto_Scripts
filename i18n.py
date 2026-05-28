@@ -141,6 +141,30 @@ T: Dict[str, Dict[str, str]] = {
         "zh": "操作",
         "en": "Action",
     },
+    "startup.source_all": {
+        "zh": "全部来源",
+        "en": "All Sources",
+    },
+    "startup.source_registry": {
+        "zh": "当前用户 Run",
+        "en": "HKCU Run",
+    },
+    "startup.source_registry_hklm": {
+        "zh": "全局 Run",
+        "en": "HKLM Run",
+    },
+    "startup.source_registry_hklm_wow6432": {
+        "zh": "32 位全局 Run",
+        "en": "HKLM Wow6432 Run",
+    },
+    "startup.source_startup_folder": {
+        "zh": "用户启动文件夹",
+        "en": "Startup Folder",
+    },
+    "startup.source_startup_folder_common": {
+        "zh": "公共启动文件夹",
+        "en": "Common Startup",
+    },
     "startup.name_placeholder": {
         "zh": "条目名称",
         "en": "Entry name",
@@ -173,6 +197,10 @@ T: Dict[str, Dict[str, str]] = {
         "zh": "删除",
         "en": "Del",
     },
+    "startup.location_btn": {
+        "zh": "位置",
+        "en": "Open",
+    },
     "startup.empty": {
         "zh": "未找到启动项",
         "en": "No startup items found.",
@@ -192,6 +220,14 @@ T: Dict[str, Dict[str, str]] = {
     "startup.remove_failed": {
         "zh": "移除「{name}」失败",
         "en": "Failed to remove '{name}'.",
+    },
+    "startup.opened_location": {
+        "zh": "已打开「{name}」所在位置",
+        "en": "Opened location for '{name}'.",
+    },
+    "startup.open_location_failed": {
+        "zh": "无法打开「{name}」所在位置",
+        "en": "Failed to open location for '{name}'.",
     },
     "startup.fill_both": {
         "zh": "请填写名称和路径",
