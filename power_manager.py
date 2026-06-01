@@ -8,7 +8,7 @@ import time
 import uuid
 import winreg
 from dataclasses import dataclass
-from typing import List, Optional, Callable
+from typing import Callable, List, Optional, Sequence
 
 
 class _GUID(ctypes.Structure):
@@ -41,6 +41,37 @@ HIGH_PERFORMANCE_PLANS = [
     "高性能",
 ]
 
+
+@dataclass(frozen=True)
+class _BuiltinPowerScheme:
+    source_guid: str
+    default_name: str
+    match_names: Sequence[str]
+    is_acceptable: bool = False
+
+
+# Windows 11 / Modern Standby machines often expose only Balanced until the
+# classic schemes are duplicated from their built-in templates.
+_BUILTIN_POWER_SCHEMES: Sequence[_BuiltinPowerScheme] = (
+    _BuiltinPowerScheme(
+        source_guid="e9a42b02-d5df-448d-aa00-03f14749eb61",
+        default_name="卓越性能",
+        match_names=("ultimate performance", "卓越性能"),
+        is_acceptable=True,
+    ),
+    _BuiltinPowerScheme(
+        source_guid="8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+        default_name="高性能",
+        match_names=("high performance", "高性能"),
+        is_acceptable=True,
+    ),
+)
+
+_BUILTIN_HIGH_PERFORMANCE_GUIDS = {
+    scheme.source_guid for scheme in _BUILTIN_POWER_SCHEMES if scheme.is_acceptable
+}
+_builtin_recovery_attempted = False
+
 _GUID_RE = re.compile(
     r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
 )
@@ -57,6 +88,14 @@ class PowerPlan:
 def _is_acceptable_name(name: str) -> bool:
     name_lower = name.lower()
     return any(target in name_lower for target in HIGH_PERFORMANCE_PLANS)
+
+
+def _is_acceptable_guid(guid: str) -> bool:
+    return guid.lower() in _BUILTIN_HIGH_PERFORMANCE_GUIDS
+
+
+def _is_acceptable_plan(guid: str, name: str) -> bool:
+    return _is_acceptable_guid(guid) or _is_acceptable_name(name)
 
 
 def _resolve_indirect_string(raw: str) -> str:
@@ -116,6 +155,33 @@ def _run_powercfg(args: List[str]) -> Optional[str]:
     return None
 
 
+def _decode_powercfg_bytes(data: bytes) -> str:
+    for encoding in ("mbcs", "utf-8", "gbk", "cp936"):
+        try:
+            text = data.decode(encoding, errors="replace")
+            if text:
+                return text
+        except LookupError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def _run_powercfg_once(args: List[str]) -> tuple[bool, str]:
+    """Run a mutating powercfg command once and return combined output."""
+    try:
+        proc = subprocess.run(
+            ["powercfg", *args],
+            capture_output=True,
+            creationflags=_subprocess_flags(),
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, ""
+
+    output = _decode_powercfg_bytes((proc.stdout or b"") + (proc.stderr or b""))
+    return proc.returncode == 0, output
+
+
 def _plan_name_from_powercfg_line(line: str, guid: str) -> str:
     # powercfg /list prints localized labels, but the visible plan name is
     # consistently wrapped in parentheses before the optional active marker.
@@ -152,7 +218,7 @@ def _get_plans_from_powercfg() -> List[PowerPlan]:
             guid=guid,
             name=name,
             is_active="*" in line,
-            is_acceptable=_is_acceptable_name(name),
+            is_acceptable=_is_acceptable_plan(guid, name),
         ))
 
     if any(p.is_active for p in plans):
@@ -206,7 +272,7 @@ def _get_plans_from_registry() -> List[PowerPlan]:
                     guid=normalized_guid,
                     name=name,
                     is_active=normalized_guid == active_guid,
-                    is_acceptable=_is_acceptable_name(name),
+                    is_acceptable=_is_acceptable_plan(normalized_guid, name),
                 ))
     except OSError:
         pass
@@ -214,12 +280,101 @@ def _get_plans_from_registry() -> List[PowerPlan]:
     return plans
 
 
+def _active_power_scheme_guid() -> Optional[str]:
+    active_output = _run_powercfg(["/getactivescheme"])
+    if active_output:
+        match = _GUID_RE.search(active_output)
+        if match:
+            return match.group(1).lower()
+
+    active_guid = (_read_reg_value(_POWER_SCHEMES_KEY, "ActivePowerScheme") or "").lower()
+    return active_guid or None
+
+
+def _merge_plans(*sources: Sequence[PowerPlan]) -> List[PowerPlan]:
+    merged: dict[str, PowerPlan] = {}
+    for source in sources:
+        for plan in source:
+            guid = plan.guid.lower()
+            if guid in merged:
+                current = merged[guid]
+                name = current.name
+                if (not name or name == current.guid) and plan.name:
+                    name = plan.name
+                current.name = name
+                current.is_active = current.is_active or plan.is_active
+                current.is_acceptable = (
+                    current.is_acceptable
+                    or plan.is_acceptable
+                    or _is_acceptable_plan(guid, name)
+                )
+            else:
+                merged[guid] = PowerPlan(
+                    guid=guid,
+                    name=plan.name,
+                    is_active=plan.is_active,
+                    is_acceptable=plan.is_acceptable or _is_acceptable_plan(guid, plan.name),
+                )
+
+    active_guid = _active_power_scheme_guid()
+    if active_guid:
+        for plan in merged.values():
+            plan.is_active = plan.guid == active_guid
+
+    return list(merged.values())
+
+
+def _matches_builtin_scheme(plan: PowerPlan, scheme: _BuiltinPowerScheme) -> bool:
+    if plan.guid == scheme.source_guid:
+        return True
+    name_lower = plan.name.lower()
+    return any(match_name in name_lower for match_name in scheme.match_names)
+
+
+def _duplicate_builtin_scheme(scheme: _BuiltinPowerScheme) -> Optional[PowerPlan]:
+    ok, output = _run_powercfg_once(["/duplicatescheme", scheme.source_guid])
+    if not ok:
+        return None
+
+    match = _GUID_RE.search(output)
+    guid = (match.group(1) if match else scheme.source_guid).lower()
+    name = _plan_name_from_powercfg_line(output, guid) if output else scheme.default_name
+    if name == guid:
+        name = scheme.default_name
+
+    return PowerPlan(
+        guid=guid,
+        name=name,
+        is_active=False,
+        is_acceptable=scheme.is_acceptable or _is_acceptable_plan(guid, name),
+    )
+
+
+def _restore_missing_builtin_schemes(plans: Sequence[PowerPlan]) -> List[PowerPlan]:
+    global _builtin_recovery_attempted
+    if _builtin_recovery_attempted:
+        return []
+    _builtin_recovery_attempted = True
+
+    restored: List[PowerPlan] = []
+    current = list(plans)
+    for scheme in _BUILTIN_POWER_SCHEMES:
+        if any(_matches_builtin_scheme(plan, scheme) for plan in current):
+            continue
+        plan = _duplicate_builtin_scheme(scheme)
+        if plan:
+            restored.append(plan)
+            current.append(plan)
+    return restored
+
+
 def get_all_plans() -> List[PowerPlan]:
-    """Read visible Windows power plans, matching Control Panel/powercfg output first."""
-    plans = _get_plans_from_powercfg()
-    if plans:
-        return plans
-    return _get_plans_from_registry()
+    """Read Windows power plans and recover hidden Win11 performance schemes."""
+    plans = _merge_plans(_get_plans_from_powercfg(), _get_plans_from_registry())
+    restored = _restore_missing_builtin_schemes(plans)
+    if restored:
+        plans = _merge_plans(plans, restored, _get_plans_from_powercfg(), _get_plans_from_registry())
+    return plans
 
 
 def get_active_plan() -> Optional[PowerPlan]:

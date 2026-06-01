@@ -1,15 +1,15 @@
 {
   "style": "Magic Dark",
   "language": "zh",
-  "monitor_enabled": true,
+  "monitor_enabled": false,
   "check_interval": 60,
-  "target_guid": "",
-  "minimize_to_tray": true,
+  "target_guid": "d6a34592-0b63-4b8f-b86e-09a6087afae4",
+  "minimize_to_tray": false,
   "start_to_tray": true,
   "col_widths": [
     0.24,
-    0.3082771535580524,
-    0.24172284644194758,
+    0.4449812734082397,
+    0.10501872659176031,
     0.18
   ]
 }

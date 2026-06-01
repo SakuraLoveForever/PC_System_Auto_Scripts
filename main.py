@@ -66,6 +66,7 @@ def load_config() -> dict:
             pass
     else:
         save_config(defaults.copy())
+    defaults["monitor_enabled"] = True
     return defaults
 
 
@@ -926,10 +927,19 @@ class App(ctk.CTk):
         self._check_btn.pack(side="left", padx=(0, 10))
         self._reg(self._check_btn, apply_btn_style)
 
+        r3 = ctk.CTkFrame(card, fg_color="transparent", height=44)
+        r3.pack(fill="x", padx=10, pady=(0, 8))
+        r3.pack_propagate(False)
+
         self._check_result_label = ctk.CTkLabel(
-            r2, text="", font=ctk.CTkFont(size=10),
-            text_color=s.text_secondary, anchor="w", width=160)
-        self._check_result_label.pack(side="left")
+            r3, text="", font=ctk.CTkFont(size=10),
+            text_color=s.text_secondary, anchor="w", justify="left", width=1)
+        self._check_result_label.pack(fill="both", expand=True)
+        r3.bind(
+            "<Configure>",
+            lambda e: self._check_result_label.configure(wraplength=max(120, e.width - 8)),
+            add="+",
+        )
         self._reg(self._check_result_label, lambda w, s: w.configure(text_color=s.text_secondary))
 
         self._power_card = card
@@ -1362,10 +1372,12 @@ class App(ctk.CTk):
             self._sidebar.pack(side="left", fill="y")
             self._sidebar.pack_propagate(False)
             if self._sidebar_expanded:
-                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_EXPANDED, 100))
+                content_w = max(self.winfo_width() - SIDEBAR_EXPANDED, 100)
+                self._main_frame_ref.configure(width=content_w)
                 self._main_frame_ref.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
             else:
-                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_COLLAPSED, 100))
+                content_w = max(self.winfo_width() - SIDEBAR_COLLAPSED, 100)
+                self._main_frame_ref.configure(width=content_w)
                 self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
             self._main_frame_ref.lift()
             self.minsize(680, 480)
@@ -1514,10 +1526,12 @@ class App(ctk.CTk):
             self._sidebar.pack(side="left", fill="y")
             self._sidebar.pack_propagate(False)
             if self._sidebar_expanded:
-                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_EXPANDED, 100))
+                content_w = max(self.winfo_width() - SIDEBAR_EXPANDED, 100)
+                self._main_frame_ref.configure(width=content_w)
                 self._main_frame_ref.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
             else:
-                self._main_frame_ref.configure(width=max(self.winfo_width() - SIDEBAR_COLLAPSED, 100))
+                content_w = max(self.winfo_width() - SIDEBAR_COLLAPSED, 100)
+                self._main_frame_ref.configure(width=content_w)
                 self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
             self._main_frame_ref.lift()
             self.minsize(680, 480)
@@ -2242,15 +2256,13 @@ class App(ctk.CTk):
             "warning": s.warning,
             "info": s.info,
         }
-        # Truncate to single line to avoid layout shift
-        if len(msg) > 60:
-            msg = msg[:57] + "..."
         self._check_result_label.configure(
             text=msg, text_color=colors.get(kind, self._style.text_secondary))
         compact_result = getattr(self, "_compact_result_label", None)
         if compact_result is not None and compact_result.winfo_exists():
+            compact_msg = msg if len(msg) <= 90 else msg[:87] + "..."
             compact_result.configure(
-                text=msg, text_color=colors.get(kind, self._style.text_secondary))
+                text=compact_msg, text_color=colors.get(kind, self._style.text_secondary))
         if not persistent:
             self._status_bar.configure(
                 text=msg, text_color=colors.get(kind, self._style.text_secondary))

@@ -104,8 +104,8 @@ T: Dict[str, Dict[str, str]] = {
         "en": "Failed to switch from '{name}'",
     },
     "power.no_target": {
-        "zh": "未找到高性能方案，请通过 powercfg 创建",
-        "en": "No High Performance plan found. Create one via powercfg.",
+        "zh": "未找到高性能/卓越性能方案，可能需要管理员权限或设备支持",
+        "en": "No High/Ultimate Performance plan found. Admin permission or device support may be required.",
     },
     "power.monitor_started": {
         "zh": "电源计划监控已启动",
