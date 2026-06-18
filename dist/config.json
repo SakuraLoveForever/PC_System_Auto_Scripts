@@ -1,10 +1,10 @@
 {
   "style": "Magic Dark",
   "language": "zh",
-  "monitor_enabled": false,
+  "monitor_enabled": true,
   "check_interval": 60,
-  "target_guid": "d6a34592-0b63-4b8f-b86e-09a6087afae4",
-  "minimize_to_tray": false,
+  "target_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+  "minimize_to_tray": true,
   "start_to_tray": true,
   "col_widths": [
     0.24,
