@@ -3,13 +3,13 @@
   "language": "zh",
   "monitor_enabled": true,
   "check_interval": 60,
-  "target_guid": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+  "target_guid": "bfc4ac38-0621-4fcb-8781-c8ae6504897b",
   "minimize_to_tray": true,
   "start_to_tray": true,
   "col_widths": [
-    0.24,
-    0.4449812734082397,
-    0.10501872659176031,
+    0.23561403508771928,
+    0.4343859649122807,
+    0.12,
     0.18
   ]
 }

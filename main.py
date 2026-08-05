@@ -147,13 +147,13 @@ def _create_tray_icon(color_hex: str = "#5e6ad2"):
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-SIDEBAR_EXPANDED = 210
-SIDEBAR_COLLAPSED = 60
+SIDEBAR_EXPANDED = 180
+SIDEBAR_COLLAPSED = 56
 COL_KEYS = ["name", "path", "source", "action"]
 COL_DEFAULTS = [0.24, 0.43, 0.12, 0.18]
 COL_MIN = 0.04
 HANDLE_WIDTH = 4
-ROW_HEIGHT = 26
+ROW_HEIGHT = 24
 AUTO_TARGET_LABEL = "Auto"
 
 
@@ -346,8 +346,8 @@ class App(ctk.CTk):
         # Compact mode
         self._compact_mode = False
         self._compact_frame: Optional[ctk.CTkFrame] = None
-        self._full_geometry = "980x640"
-        self._compact_geometry = "360x170"
+        self._full_geometry = "880x580"
+        self._compact_geometry = "260x168"
 
         # Column widths (fractions, sum ~1.0)
         self._col_widths = list(self.cfg.get("col_widths", COL_DEFAULTS))
@@ -383,8 +383,8 @@ class App(ctk.CTk):
             self.power_monitor.target_guid = self.cfg["target_guid"]
 
         self.title(self._i18n.t("app.title"))
-        self.geometry("980x640")
-        self.minsize(680, 480)
+        self.geometry("880x580")
+        self.minsize(620, 420)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Do NOT call set_default_color_theme — we manage colors manually
@@ -463,8 +463,6 @@ class App(ctk.CTk):
 
         self.update_idletasks()
         self._update_tray_icon_color()
-        if hasattr(self, '_compact_style_dd') and self._compact_style_dd.winfo_exists():
-            self._compact_style_dd.set(name)
         # Defer rebuild to avoid conflicts with dropdown menu closing
         if hasattr(self, '_deferred_refresh_id'):
             self.after_cancel(self._deferred_refresh_id)
@@ -519,13 +517,13 @@ class App(ctk.CTk):
 
         # Brand
         self._brand_frame = ctk.CTkFrame(self._sidebar, fg_color="transparent")
-        self._brand_frame.pack(fill="x", padx=14, pady=(16, 4))
-        self._brand_icon = ctk.CTkLabel(self._brand_frame, text="⚡", font=ctk.CTkFont(size=22),
+        self._brand_frame.pack(fill="x", padx=10, pady=(12, 3))
+        self._brand_icon = ctk.CTkLabel(self._brand_frame, text="⚡", font=ctk.CTkFont(size=20),
                                         text_color=s.accent, anchor="w")
         self._brand_icon.pack(side="left")
         self._reg(self._brand_icon, lambda w, s: w.configure(text_color=s.accent))
         self._brand_text = ctk.CTkLabel(self._brand_frame, text="PC Auto",
-                                        font=ctk.CTkFont(size=17, weight="bold"),
+                                        font=ctk.CTkFont(size=15, weight="bold"),
                                         text_color=s.text_primary, anchor="w")
         self._brand_text.pack(side="left", padx=(8, 0))
         self._reg(self._brand_text, lambda w, s: w.configure(text_color=s.text_primary))
@@ -533,32 +531,32 @@ class App(ctk.CTk):
         # Section labels
         self._appearance_label = ctk.CTkLabel(
             self._sidebar, text=self._i18n.t("sidebar.appearance"),
-            font=ctk.CTkFont(size=13), text_color=s.text_muted, anchor="w")
-        self._appearance_label.pack(fill="x", padx=14, pady=(12, 4))
+            font=ctk.CTkFont(size=11), text_color=s.text_muted, anchor="w")
+        self._appearance_label.pack(fill="x", padx=10, pady=(8, 3))
         self._reg(self._appearance_label, lambda w, s: w.configure(text_color=s.text_muted))
 
         # Style dropdown
         self._style_dropdown = ctk.CTkOptionMenu(
-            self._sidebar, values=list(STYLES.keys()), font=ctk.CTkFont(size=15),
+            self._sidebar, values=list(STYLES.keys()), font=ctk.CTkFont(size=13),
             command=self._switch_style)
         apply_dropdown(self._style_dropdown, s)
         _make_dropdown_toggle(self._style_dropdown)
         self._style_dropdown.set(self.cfg["style"])
-        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=118,
-                         max_width=SIDEBAR_EXPANDED - 24)
-        self._style_dropdown.pack(anchor="w", padx=12, pady=(2, 6))
+        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=100,
+                         max_width=SIDEBAR_EXPANDED - 20)
+        self._style_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
         self._reg(self._style_dropdown, apply_dropdown)
 
         # Language dropdown
         self._lang_dropdown = ctk.CTkOptionMenu(
             self._sidebar, values=[LANG_LABELS[l] for l in SUPPORTED_LANGS],
-            font=ctk.CTkFont(size=15), command=self._on_lang_changed)
+            font=ctk.CTkFont(size=13), command=self._on_lang_changed)
         apply_dropdown(self._lang_dropdown, s)
         _make_dropdown_toggle(self._lang_dropdown)
         self._lang_dropdown.set(LANG_LABELS.get(self._i18n.lang, "中文"))
         fit_option_width(self._lang_dropdown, [LANG_LABELS[l] for l in SUPPORTED_LANGS],
-                         min_width=96, max_width=SIDEBAR_EXPANDED - 24)
-        self._lang_dropdown.pack(anchor="w", padx=12, pady=(2, 6))
+                         min_width=80, max_width=SIDEBAR_EXPANDED - 20)
+        self._lang_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
         self._reg(self._lang_dropdown, apply_dropdown)
 
         # Icon buttons for collapsed mode
@@ -577,30 +575,30 @@ class App(ctk.CTk):
         # Separator + settings section
         self._sep2 = ctk.CTkFrame(self._sidebar, height=1)
         self._sep2.configure(fg_color=s.border)
-        self._sep2.pack(fill="x", padx=12, pady=(14, 10))
+        self._sep2.pack(fill="x", padx=8, pady=(10, 6))
         self._reg(self._sep2, lambda w, s: w.configure(fg_color=s.border))
 
         self._settings_label = ctk.CTkLabel(
             self._sidebar, text=self._i18n.t("sidebar.settings"),
-            font=ctk.CTkFont(size=13), text_color=s.text_muted, anchor="w")
-        self._settings_label.pack(fill="x", padx=14, pady=(0, 4))
+            font=ctk.CTkFont(size=11), text_color=s.text_muted, anchor="w")
+        self._settings_label.pack(fill="x", padx=10, pady=(0, 3))
         self._reg(self._settings_label, lambda w, s: w.configure(text_color=s.text_muted))
 
         # Close behavior toggle
         self._tray_toggle_switch = ctk.CTkSwitch(
             self._sidebar, text=self._i18n.t("tray.minimize_to_tray"),
-            font=ctk.CTkFont(size=14), text_color=s.text_secondary,
+            font=ctk.CTkFont(size=12), text_color=s.text_secondary,
             command=self._toggle_tray_behavior)
         apply_switch(self._tray_toggle_switch, s)
-        self._tray_toggle_switch.pack(padx=14, pady=(2, 4), anchor="w")
+        self._tray_toggle_switch.pack(padx=10, pady=(2, 3), anchor="w")
         if self.cfg.get("minimize_to_tray", True):
             self._tray_toggle_switch.select()
         self._reg(self._tray_toggle_switch, apply_switch)
 
         # Version
         self._sidebar_version = ctk.CTkLabel(
-            self._sidebar, text="v1.0.0", font=ctk.CTkFont(size=13), text_color=s.text_muted)
-        self._sidebar_version.pack(side="bottom", pady=(0, 10))
+            self._sidebar, text="v1.0.0", font=ctk.CTkFont(size=11), text_color=s.text_muted)
+        self._sidebar_version.pack(side="bottom", pady=(0, 6))
         self._reg(self._sidebar_version, lambda w, s: w.configure(text_color=s.text_muted))
 
         # Toggle button — placed on the right edge of the sidebar,
@@ -642,14 +640,14 @@ class App(ctk.CTk):
             self._toggle_btn.configure(text="◀")
             self._style_icon_btn.pack_forget()
             self._lang_icon_btn.pack_forget()
-            self._brand_frame.pack(fill="x", padx=14, pady=(16, 4))
-            self._appearance_label.pack(fill="x", padx=14, pady=(12, 4))
-            self._style_dropdown.pack(anchor="w", padx=12, pady=(2, 6))
-            self._lang_dropdown.pack(anchor="w", padx=12, pady=(2, 6))
-            self._sep2.pack(fill="x", padx=12, pady=(14, 10))
-            self._settings_label.pack(fill="x", padx=14, pady=(0, 4))
-            self._tray_toggle_switch.pack(padx=14, pady=(2, 4), anchor="w")
-            self._sidebar_version.pack(side="bottom", pady=(0, 10))
+            self._brand_frame.pack(fill="x", padx=10, pady=(12, 3))
+            self._appearance_label.pack(fill="x", padx=10, pady=(8, 3))
+            self._style_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
+            self._lang_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
+            self._sep2.pack(fill="x", padx=8, pady=(10, 6))
+            self._settings_label.pack(fill="x", padx=10, pady=(0, 3))
+            self._tray_toggle_switch.pack(padx=10, pady=(2, 3), anchor="w")
+            self._sidebar_version.pack(side="bottom", pady=(0, 6))
             new_win_w = cur_w + delta
             self._toggle_btn.place(x=SIDEBAR_EXPANDED - 2, rely=0.5, anchor="w")
 
@@ -688,60 +686,6 @@ class App(ctk.CTk):
         save_config(self.cfg)
         self._refresh_all_text()
 
-    def _refresh_all_text(self):
-        self.title(self._i18n.t("app.title"))
-        self._header_title_label.configure(text=self._i18n.t("app.title"))
-        self._power_title_label.configure(text="⚡ " + self._i18n.t("power.title"))
-        self._power_target_label.configure(text=self._i18n.t("power.target_plan") + ":")
-        self._power_interval_label.configure(text=self._i18n.t("power.interval") + ":")
-        self._power_interval_suffix.configure(text=self._i18n.t("power.seconds"))
-        self._apply_interval_btn.configure(text=self._i18n.t("general.apply"))
-        self._check_btn.configure(text=self._i18n.t("power.check_now"))
-        self._monitor_switch.configure(text=self._i18n.t("power.auto_monitor"))
-        self._startup_title_label.configure(text=self._i18n.t("startup.title"))
-        self._startup_name_entry.configure(placeholder_text=self._i18n.t("startup.name_placeholder"))
-        self._startup_path_entry.configure(placeholder_text=self._i18n.t("startup.path_placeholder"))
-        self._startup_add_btn.configure(text=self._i18n.t("startup.add_btn"))
-        self._startup_add_self_btn.configure(text=self._i18n.t("startup.add_self_btn"))
-        self._startup_remove_self_btn.configure(text=self._i18n.t("startup.remove_self_btn"))
-        self._startup_refresh_btn.configure(text=self._i18n.t("startup.refresh_btn"))
-        self._update_source_filter_dropdown()
-        self._appearance_label.configure(text=self._i18n.t("sidebar.appearance"))
-        self._settings_label.configure(text=self._i18n.t("sidebar.settings"))
-        self._tray_toggle_switch.configure(text=self._i18n.t("tray.minimize_to_tray"))
-        self._update_mode_switch_texts()
-        if hasattr(self, '_compact_title') and self._compact_title.winfo_exists():
-            self._compact_title.configure(text="⚡ " + self._i18n.t("power.title"))
-        if hasattr(self, '_compact_active_label') and self._compact_active_label.winfo_exists():
-            self._compact_active_label.configure(text=self._i18n.t("power.active_plan") + ":")
-        if hasattr(self, '_compact_check_btn') and self._compact_check_btn.winfo_exists():
-            self._compact_check_btn.configure(text=self._i18n.t("power.check_now"))
-        if hasattr(self, '_compact_monitor_switch') and self._compact_monitor_switch.winfo_exists():
-            self._compact_monitor_switch.configure(text=self._i18n.t("power.auto_monitor"))
-        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=118,
-                         max_width=SIDEBAR_EXPANDED - 24)
-        fit_option_width(self._lang_dropdown, [LANG_LABELS[l] for l in SUPPORTED_LANGS],
-                         min_width=96, max_width=SIDEBAR_EXPANDED - 24)
-        fit_entry_width(self._interval_entry, min_width=52, max_width=92, padding=30)
-        fit_entry_width(self._startup_name_entry, min_width=112, max_width=190, padding=34)
-        fit_entry_width(self._startup_path_entry, min_width=180, max_width=430, padding=38)
-        fit_button_width(self._apply_interval_btn, min_width=56, max_width=96)
-        fit_button_width(self._check_btn, min_width=92, max_width=180)
-        fit_button_width(self._startup_refresh_btn, min_width=62, max_width=120)
-        fit_button_width(self._startup_add_btn, min_width=70, max_width=126)
-        fit_button_width(self._startup_add_self_btn, min_width=92, max_width=160)
-        fit_button_width(self._startup_remove_self_btn, min_width=92, max_width=170)
-        fit_button_width(self._compact_toggle_btn, min_width=74, max_width=110, padding=24)
-        if hasattr(self, '_compact_full_btn') and self._compact_full_btn.winfo_exists():
-            fit_button_width(self._compact_full_btn, min_width=82, max_width=124, padding=26)
-        if self._sidebar_expanded:
-            self._toggle_btn.configure(text="◀")
-        else:
-            self._toggle_btn.configure(text="▶")
-        self._update_sort_indicator()
-        self._refresh_power_status()
-        self._refresh_startup_list()
-
     # ==================================================================
     # Main content
     # ==================================================================
@@ -749,25 +693,25 @@ class App(ctk.CTk):
     def _build_main_content(self):
         s = self._style
         main = ctk.CTkFrame(self, fg_color="transparent",
-                            width=980 - SIDEBAR_EXPANDED)
+                            width=880 - SIDEBAR_EXPANDED)
         self._main_frame_ref = main
         main.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
         self.bind("<Configure>", self._on_root_configure, add="+")
 
         # Header — minimal, single row
-        header = ctk.CTkFrame(main, fg_color="transparent", height=32)
-        header.pack(fill="x", padx=16, pady=(8, 0))
+        header = ctk.CTkFrame(main, fg_color="transparent", height=26)
+        header.pack(fill="x", padx=10, pady=(4, 0))
         header.pack_propagate(False)
 
         self._header_title_label = ctk.CTkLabel(
             header, text=self._i18n.t("app.title"),
-            font=ctk.CTkFont(size=17, weight="bold"), text_color=s.text_primary,
+            font=ctk.CTkFont(size=15, weight="bold"), text_color=s.text_primary,
             anchor="w")
         self._header_title_label.pack(side="left")
         self._reg(self._header_title_label, lambda w, s: w.configure(text_color=s.text_primary))
 
         self._monitor_switch = ctk.CTkSwitch(
-            header, text=self._i18n.t("power.auto_monitor"), font=ctk.CTkFont(size=13),
+            header, text=self._i18n.t("power.auto_monitor"), font=ctk.CTkFont(size=11),
             command=self._toggle_monitor)
         apply_switch(self._monitor_switch, s)
         self._monitor_switch.pack(side="right", padx=(0, 8))
@@ -776,8 +720,8 @@ class App(ctk.CTk):
         self._reg(self._monitor_switch, apply_switch)
 
         self._compact_toggle_btn = ctk.CTkButton(
-            header, text=self._i18n.t("compact.toggle"), width=48, height=24,
-            font=ctk.CTkFont(size=11), command=self._toggle_compact_mode)
+            header, text=self._i18n.t("compact.toggle"), width=44, height=22,
+            font=ctk.CTkFont(size=10), command=self._toggle_compact_mode)
         apply_btn_secondary(self._compact_toggle_btn, s)
         self._compact_toggle_btn.pack(side="right")
         self._reg(self._compact_toggle_btn, apply_btn_secondary)
@@ -791,8 +735,8 @@ class App(ctk.CTk):
         self._build_compact_view()
 
         self._status_bar = ctk.CTkLabel(
-            main, text="", font=ctk.CTkFont(size=11), text_color=s.text_muted, anchor="w")
-        self._status_bar.pack(side="bottom", fill="x", padx=16, pady=(0, 4))
+            main, text="", font=ctk.CTkFont(size=10), text_color=s.text_muted, anchor="w")
+        self._status_bar.pack(side="bottom", fill="x", padx=10, pady=(0, 2))
         self._reg(self._status_bar, lambda w, s: w.configure(text_color=s.text_muted))
 
     def _on_root_configure(self, event):
@@ -845,48 +789,48 @@ class App(ctk.CTk):
         s = self._style
         card = ctk.CTkFrame(self._main_frame)
         apply_card(card, s)
-        card.pack(fill="x", padx=14, pady=(4, 2))
+        card.pack(fill="x", padx=8, pady=(2, 1))
         self._reg(card, apply_card)
 
         # Row 1: title + status badge + active plan name
-        r1 = ctk.CTkFrame(card, fg_color="transparent", height=30)
-        r1.pack(fill="x", padx=10, pady=(6, 2))
+        r1 = ctk.CTkFrame(card, fg_color="transparent", height=26)
+        r1.pack(fill="x", padx=8, pady=(4, 1))
         r1.pack_propagate(False)
 
         self._power_title_label = ctk.CTkLabel(
             r1, text="⚡ " + self._i18n.t("power.title"),
-            font=ctk.CTkFont(size=13, weight="bold"), text_color=s.text_primary, anchor="w")
+            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
         self._power_title_label.pack(side="left")
         self._reg(self._power_title_label, lambda w, s: w.configure(text_color=s.text_primary))
 
         self._power_status_badge = ctk.CTkLabel(
             r1, text=self._i18n.t("power.status_checking"),
-            font=ctk.CTkFont(size=11, weight="bold"), text_color=s.text_secondary,
-            width=72, height=20, fg_color=s.surface, corner_radius=10)
-        self._power_status_badge.pack(side="left", padx=(8, 10))
+            font=ctk.CTkFont(size=10, weight="bold"), text_color=s.text_secondary,
+            width=64, height=18, fg_color=s.surface, corner_radius=9)
+        self._power_status_badge.pack(side="left", padx=(6, 8))
         self._reg(self._power_status_badge,
                   lambda w, s: w.configure(text_color=s.text_secondary, fg_color=s.surface))
 
         self._power_active_value = ctk.CTkLabel(
-            r1, text="--", font=ctk.CTkFont(size=15, weight="bold"),
+            r1, text="--", font=ctk.CTkFont(size=14, weight="bold"),
             text_color=s.text_primary, anchor="w")
         self._power_active_value.pack(side="left")
         self._reg(self._power_active_value, lambda w, s: w.configure(text_color=s.text_primary))
 
         # Row 2: all controls inline
-        r2 = ctk.CTkFrame(card, fg_color="transparent", height=32)
-        r2.pack(fill="x", padx=10, pady=(2, 6))
+        r2 = ctk.CTkFrame(card, fg_color="transparent", height=28)
+        r2.pack(fill="x", padx=8, pady=(2, 4))
         r2.pack_propagate(False)
 
         self._power_target_label = ctk.CTkLabel(
             r2, text=self._i18n.t("power.target_plan") + ":",
-            font=ctk.CTkFont(size=11), text_color=s.text_secondary, anchor="w")
-        self._power_target_label.pack(side="left", padx=(0, 3))
+            font=ctk.CTkFont(size=10), text_color=s.text_secondary, anchor="w")
+        self._power_target_label.pack(side="left", padx=(0, 2))
         self._reg(self._power_target_label, lambda w, s: w.configure(text_color=s.text_secondary))
 
         self._target_dropdown = ctk.CTkOptionMenu(
-            r2, values=["Auto"], font=ctk.CTkFont(size=12),
-            height=26, width=110, dynamic_resizing=False, command=self._on_target_changed)
+            r2, values=["Auto"], font=ctk.CTkFont(size=11),
+            height=24, width=110, dynamic_resizing=False, command=self._on_target_changed)
         apply_dropdown(self._target_dropdown, s)
         self._target_dropdown.pack(side="left", padx=(0, 10))
         self._reg(self._target_dropdown, apply_dropdown)
@@ -895,11 +839,11 @@ class App(ctk.CTk):
 
         self._power_interval_label = ctk.CTkLabel(
             r2, text=self._i18n.t("power.interval") + ":",
-            font=ctk.CTkFont(size=11), text_color=s.text_secondary, anchor="w")
+            font=ctk.CTkFont(size=10), text_color=s.text_secondary, anchor="w")
         self._power_interval_label.pack(side="left", padx=(0, 2))
         self._reg(self._power_interval_label, lambda w, s: w.configure(text_color=s.text_secondary))
 
-        self._interval_entry = ctk.CTkEntry(r2, width=42, height=26, font=ctk.CTkFont(size=12))
+        self._interval_entry = ctk.CTkEntry(r2, width=38, height=24, font=ctk.CTkFont(size=11))
         apply_entry(self._interval_entry, s)
         self._interval_entry.pack(side="left")
         self._interval_entry.insert(0, str(self.cfg["check_interval"]))
@@ -908,27 +852,27 @@ class App(ctk.CTk):
 
         self._power_interval_suffix = ctk.CTkLabel(
             r2, text=self._i18n.t("power.seconds"),
-            font=ctk.CTkFont(size=10), text_color=s.text_muted, width=14)
-        self._power_interval_suffix.pack(side="left", padx=(2, 4))
+            font=ctk.CTkFont(size=9), text_color=s.text_muted, width=12)
+        self._power_interval_suffix.pack(side="left", padx=(2, 3))
         self._reg(self._power_interval_suffix, lambda w, s: w.configure(text_color=s.text_muted))
 
         self._apply_interval_btn = ctk.CTkButton(
-            r2, text=self._i18n.t("general.apply"), width=44, height=26,
-            font=ctk.CTkFont(size=11), command=self._apply_interval)
+            r2, text=self._i18n.t("general.apply"), width=40, height=24,
+            font=ctk.CTkFont(size=10), command=self._apply_interval)
         apply_btn_style(self._apply_interval_btn, s)
-        self._apply_interval_btn.pack(side="left", padx=(0, 10))
+        self._apply_interval_btn.pack(side="left", padx=(0, 8))
         self._reg(self._apply_interval_btn, apply_btn_style)
 
         self._check_btn = ctk.CTkButton(
-            r2, text=self._i18n.t("power.check_now"), height=26,
-            font=ctk.CTkFont(size=12), command=lambda: [self._btn_press_flash(self._check_btn), self._check_now()])
+            r2, text=self._i18n.t("power.check_now"), height=24,
+            font=ctk.CTkFont(size=11), command=lambda: [self._btn_press_flash(self._check_btn), self._check_now()])
         apply_btn_style(self._check_btn, s)
-        fit_button_width(self._check_btn, min_width=70, max_width=140)
-        self._check_btn.pack(side="left", padx=(0, 10))
+        fit_button_width(self._check_btn, min_width=64, max_width=130)
+        self._check_btn.pack(side="left", padx=(0, 8))
         self._reg(self._check_btn, apply_btn_style)
 
-        r3 = ctk.CTkFrame(card, fg_color="transparent", height=44)
-        r3.pack(fill="x", padx=10, pady=(0, 8))
+        r3 = ctk.CTkFrame(card, fg_color="transparent", height=32)
+        r3.pack(fill="x", padx=8, pady=(0, 4))
         r3.pack_propagate(False)
 
         self._check_result_label = ctk.CTkLabel(
@@ -982,34 +926,34 @@ class App(ctk.CTk):
         s = self._style
         card = ctk.CTkFrame(self._main_frame)
         apply_card(card, s)
-        card.pack(fill="both", expand=True, padx=16, pady=(0, 10))
+        card.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         self._reg(card, apply_card)
 
         # Title
         title_row = ctk.CTkFrame(card, fg_color="transparent")
-        title_row.pack(fill="x", padx=12, pady=(8, 4))
+        title_row.pack(fill="x", padx=8, pady=(6, 3))
         self._startup_title_label = ctk.CTkLabel(
             title_row, text=self._i18n.t("startup.title"),
-            font=ctk.CTkFont(size=15, weight="bold"), text_color=s.text_primary)
+            font=ctk.CTkFont(size=13, weight="bold"), text_color=s.text_primary)
         self._startup_title_label.pack(side="left")
         self._reg(self._startup_title_label, lambda w, s: w.configure(text_color=s.text_primary))
 
         self._startup_count_label = ctk.CTkLabel(
-            title_row, text="", font=ctk.CTkFont(size=13), text_color=s.text_secondary)
-        self._startup_count_label.pack(side="right", padx=(0, 4))
+            title_row, text="", font=ctk.CTkFont(size=11), text_color=s.text_secondary)
+        self._startup_count_label.pack(side="right", padx=(0, 3))
         self._reg(self._startup_count_label, lambda w, s: w.configure(text_color=s.text_secondary))
 
         self._startup_refresh_btn = ctk.CTkButton(
-            title_row, text=self._i18n.t("startup.refresh_btn"), width=64, height=24,
-            font=ctk.CTkFont(size=12), command=self._refresh_startup_list)
+            title_row, text=self._i18n.t("startup.refresh_btn"), width=56, height=22,
+            font=ctk.CTkFont(size=11), command=self._refresh_startup_list)
         apply_btn_secondary(self._startup_refresh_btn, s)
-        fit_button_width(self._startup_refresh_btn, min_width=56, max_width=100)
+        fit_button_width(self._startup_refresh_btn, min_width=50, max_width=90)
         self._startup_refresh_btn.pack(side="right")
         self._reg(self._startup_refresh_btn, apply_btn_secondary)
 
         self._source_filter_dropdown = ctk.CTkOptionMenu(
             title_row, values=[self._i18n.t("startup.source_all")],
-            font=ctk.CTkFont(size=12), height=24, dynamic_resizing=False,
+            font=ctk.CTkFont(size=11), height=22, dynamic_resizing=False,
             command=self._on_source_filter_changed)
         apply_dropdown(self._source_filter_dropdown, s)
         _make_dropdown_toggle(self._source_filter_dropdown)
@@ -1021,59 +965,59 @@ class App(ctk.CTk):
         # --- Add row ---
         add_row = ctk.CTkFrame(card)
         apply_surface_corner(add_row, s)
-        add_row.pack(fill="x", padx=12, pady=(0, 8))
+        add_row.pack(fill="x", padx=8, pady=(0, 6))
         self._reg(add_row, apply_surface_corner)
 
         self._startup_name_entry = ctk.CTkEntry(
             add_row, placeholder_text=self._i18n.t("startup.name_placeholder"),
-            width=130, height=28, font=ctk.CTkFont(size=13))
+            width=120, height=24, font=ctk.CTkFont(size=12))
         apply_entry(self._startup_name_entry, s)
-        bind_entry_autofit(self._startup_name_entry, min_width=100, max_width=170, padding=32)
-        self._startup_name_entry.pack(side="left", padx=(8, 4), pady=8)
+        bind_entry_autofit(self._startup_name_entry, min_width=90, max_width=160, padding=28)
+        self._startup_name_entry.pack(side="left", padx=(6, 3), pady=6)
         self._reg(self._startup_name_entry, apply_entry)
 
         self._startup_path_entry = ctk.CTkEntry(
             add_row, placeholder_text=self._i18n.t("startup.path_placeholder"),
-            height=28, font=ctk.CTkFont(size=13))
+            height=24, font=ctk.CTkFont(size=12))
         apply_entry(self._startup_path_entry, s)
-        bind_entry_autofit(self._startup_path_entry, min_width=160, max_width=380, padding=36)
-        self._startup_path_entry.pack(side="left", padx=(0, 4), pady=8)
+        bind_entry_autofit(self._startup_path_entry, min_width=140, max_width=350, padding=32)
+        self._startup_path_entry.pack(side="left", padx=(0, 3), pady=6)
         self._reg(self._startup_path_entry, apply_entry)
 
         self._startup_browse_btn = ctk.CTkButton(
-            add_row, text="...", width=30, height=28, font=ctk.CTkFont(size=13),
+            add_row, text="...", width=28, height=24, font=ctk.CTkFont(size=12),
             command=self._browse_startup_path)
         apply_btn_secondary(self._startup_browse_btn, s)
-        self._startup_browse_btn.pack(side="left", padx=(0, 4), pady=8)
+        self._startup_browse_btn.pack(side="left", padx=(0, 3), pady=6)
         self._reg(self._startup_browse_btn, apply_btn_secondary)
 
         self._startup_add_btn = ctk.CTkButton(
-            add_row, text=self._i18n.t("startup.add_btn"), width=68, height=28,
-            font=ctk.CTkFont(size=13), command=self._add_startup_item)
+            add_row, text=self._i18n.t("startup.add_btn"), width=60, height=24,
+            font=ctk.CTkFont(size=12), command=self._add_startup_item)
         apply_btn_style(self._startup_add_btn, s)
-        fit_button_width(self._startup_add_btn, min_width=60, max_width=110)
-        self._startup_add_btn.pack(side="left", padx=(0, 4), pady=8)
+        fit_button_width(self._startup_add_btn, min_width=54, max_width=100)
+        self._startup_add_btn.pack(side="left", padx=(0, 3), pady=6)
         self._reg(self._startup_add_btn, apply_btn_style)
 
         # Toggle button: "Add This App" / "Remove This App"
         self._startup_add_self_btn = ctk.CTkButton(
-            add_row, text=self._i18n.t("startup.add_self_btn"), width=92, height=28,
-            font=ctk.CTkFont(size=12), command=self._add_self_to_startup)
+            add_row, text=self._i18n.t("startup.add_self_btn"), width=82, height=24,
+            font=ctk.CTkFont(size=11), command=self._add_self_to_startup)
         apply_btn_secondary(self._startup_add_self_btn, s)
-        fit_button_width(self._startup_add_self_btn, min_width=84, max_width=140)
+        fit_button_width(self._startup_add_self_btn, min_width=74, max_width=130)
         self._reg(self._startup_add_self_btn, apply_btn_secondary)
 
         self._startup_remove_self_btn = ctk.CTkButton(
-            add_row, text=self._i18n.t("startup.remove_self_btn"), width=92, height=28,
-            font=ctk.CTkFont(size=12), command=self._remove_self_from_startup)
+            add_row, text=self._i18n.t("startup.remove_self_btn"), width=82, height=24,
+            font=ctk.CTkFont(size=11), command=self._remove_self_from_startup)
         apply_btn_secondary(self._startup_remove_self_btn, s)
-        fit_button_width(self._startup_remove_self_btn, min_width=84, max_width=150)
+        fit_button_width(self._startup_remove_self_btn, min_width=74, max_width=140)
         self._reg(self._startup_remove_self_btn, apply_btn_secondary)
 
         # --- Column header ---
-        self._header_frame = ctk.CTkFrame(card, height=26)
+        self._header_frame = ctk.CTkFrame(card, height=24)
         apply_surface_corner(self._header_frame, s)
-        self._header_frame.pack(fill="x", padx=12, pady=(0, 2))
+        self._header_frame.pack(fill="x", padx=8, pady=(0, 1))
         self._header_frame.pack_propagate(False)
         self._header_frame.bind("<Configure>", self._on_header_configure)
         self._reg(self._header_frame, apply_surface_corner)
@@ -1085,7 +1029,7 @@ class App(ctk.CTk):
 
         for i, key in enumerate(COL_KEYS):
             lbl = ctk.CTkLabel(self._header_frame, text=self._i18n.t(col_i18n[key]),
-                               font=ctk.CTkFont(size=12, weight="bold"),
+                               font=ctk.CTkFont(size=11, weight="bold"),
                                text_color=s.text_secondary, anchor="w",
                                cursor="hand2" if key in ("name", "source") else None)
             if key in ("name", "source"):
@@ -1113,280 +1057,21 @@ class App(ctk.CTk):
         # --- Scrollable list ---
         self._startup_list_frame = ctk.CTkScrollableFrame(
             card, fg_color="transparent",
-            scrollbar_button_color=s.border, scrollbar_button_hover_color=s.border_strong)
-        self._startup_list_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
-        self._startup_list_frame._parent_canvas.configure(yscrollincrement=18,
-                                                          xscrollincrement=18)
+            scrollbar_fg_color=s.surface,
+            scrollbar_button_color=s.border_strong,
+            scrollbar_button_hover_color=s.accent)
+        self._startup_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        self._startup_list_frame._parent_canvas.configure(yscrollincrement=3,
+                                                          xscrollincrement=3)
         self._reg(self._startup_list_frame,
-                       lambda w, s: w.configure(scrollbar_button_color=s.border,
-                                                scrollbar_button_hover_color=s.border_strong))
+                       lambda w, s: w.configure(
+                           scrollbar_fg_color=s.surface,
+                           scrollbar_button_color=s.border_strong,
+                           scrollbar_button_hover_color=s.accent))
         self._table_rows: List[ctk.CTkFrame] = []
 
         self._startup_card = card
         self._refresh_startup_list()
-
-    # ==================================================================
-    # Compact view — minimal power-only window
-    # ==================================================================
-
-    def _build_compact_view(self):
-        """Build a compact card with only: style, target plan, interval, check."""
-        s = self._style
-        frame = ctk.CTkFrame(self, fg_color="transparent")
-        self._compact_frame = frame
-
-        # Compact card
-        card = ctk.CTkFrame(frame)
-        apply_card(card, s)
-        card.pack(fill="both", expand=True, padx=16, pady=(8, 6))
-        self._reg(card, apply_card)
-
-        # Title row with status badge and full-mode button
-        title_row = ctk.CTkFrame(card, fg_color="transparent", height=32)
-        title_row.pack(fill="x", padx=14, pady=(12, 10))
-        title_row.pack_propagate(False)
-
-        self._compact_title = ctk.CTkLabel(
-            title_row, text="⚡ " + self._i18n.t("power.title"),
-            font=ctk.CTkFont(size=16, weight="bold"), text_color=s.text_primary, anchor="w")
-        self._compact_title.pack(side="left")
-        self._reg(self._compact_title, lambda w, s: w.configure(text_color=s.text_primary))
-
-        self._compact_full_btn = ctk.CTkButton(
-            title_row, text=self._i18n.t("compact.full"), width=56, height=26,
-            font=ctk.CTkFont(size=12), command=self._toggle_compact_mode)
-        apply_btn_secondary(self._compact_full_btn, s)
-        self._compact_full_btn.pack(side="right")
-        self._reg(self._compact_full_btn, apply_btn_secondary)
-        fit_button_width(self._compact_full_btn, min_width=82, max_width=124, padding=26)
-
-        self._compact_status_badge = ctk.CTkLabel(
-            title_row, text="--", font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=s.text_secondary, width=88, height=26,
-            fg_color=s.surface, corner_radius=13)
-        self._compact_status_badge.pack(side="right", padx=(0, 8))
-        self._reg(self._compact_status_badge,
-                  lambda w, s: w.configure(text_color=s.text_secondary, fg_color=s.surface))
-
-        # Active plan display
-        active_row = ctk.CTkFrame(card)
-        apply_surface_corner(active_row, s)
-        active_row.pack(fill="x", padx=14, pady=(0, 8))
-        self._reg(active_row, apply_surface_corner)
-
-        self._compact_active_label = ctk.CTkLabel(
-            active_row, text=self._i18n.t("power.active_plan") + ":",
-            font=ctk.CTkFont(size=12), text_color=s.text_secondary, anchor="w")
-        self._compact_active_label.pack(fill="x", padx=12, pady=(10, 1))
-        self._reg(self._compact_active_label, lambda w, s: w.configure(text_color=s.text_secondary))
-
-        self._compact_active_value = ctk.CTkLabel(
-            active_row, text="--", font=ctk.CTkFont(size=18, weight="bold"),
-            text_color=s.text_primary, anchor="w", wraplength=380)
-        self._compact_active_value.pack(fill="x", padx=12, pady=(0, 10))
-        self._reg(self._compact_active_value, lambda w, s: w.configure(text_color=s.text_primary))
-
-        # Controls area split into two calmer cards
-        controls_row = ctk.CTkFrame(card, fg_color="transparent")
-        controls_row.pack(fill="x", padx=14, pady=(0, 14))
-
-        settings_panel = ctk.CTkFrame(controls_row)
-        apply_surface_corner(settings_panel, s)
-        settings_panel.pack(side="left", fill="both", expand=True, padx=(0, 8))
-        self._reg(settings_panel, apply_surface_corner)
-
-        actions_panel = ctk.CTkFrame(controls_row)
-        apply_surface_corner(actions_panel, s)
-        actions_panel.pack(side="left", fill="both", expand=True, padx=(8, 0))
-        self._reg(actions_panel, apply_surface_corner)
-
-        settings_lbl = ctk.CTkLabel(
-            settings_panel, text=self._i18n.t("sidebar.appearance"),
-            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
-        settings_lbl.pack(fill="x", padx=12, pady=(10, 6))
-        self._reg(settings_lbl, lambda w, s: w.configure(text_color=s.text_primary))
-
-        self._compact_style_dd = ctk.CTkOptionMenu(
-            settings_panel, values=list(STYLES.keys()), font=ctk.CTkFont(size=14),
-            height=30, width=150, command=self._switch_style)
-        apply_dropdown(self._compact_style_dd, s)
-        self._compact_style_dd.set(self.cfg["style"])
-        fit_option_width(self._compact_style_dd, list(STYLES.keys()), min_width=124, max_width=190)
-        self._compact_style_dd.pack(fill="x", padx=12)
-        self._reg(self._compact_style_dd, apply_dropdown)
-        _make_dropdown_toggle(self._compact_style_dd)
-
-        target_lbl = ctk.CTkLabel(
-            settings_panel, text=self._i18n.t("power.target_plan"),
-            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
-        target_lbl.pack(fill="x", padx=12, pady=(12, 6))
-        self._reg(target_lbl, lambda w, s: w.configure(text_color=s.text_primary))
-
-        self._compact_target_dd = ctk.CTkOptionMenu(
-            settings_panel, values=["Auto"], font=ctk.CTkFont(size=14),
-            height=30, width=160, dynamic_resizing=False,
-            command=self._on_compact_target_changed)
-        apply_dropdown(self._compact_target_dd, s)
-        self._compact_target_dd.pack(fill="x", padx=12, pady=(0, 12))
-        self._reg(self._compact_target_dd, apply_dropdown)
-        _make_dropdown_toggle(self._compact_target_dd)
-
-        actions_lbl = ctk.CTkLabel(
-            actions_panel, text=self._i18n.t("power.check_now"),
-            font=ctk.CTkFont(size=12, weight="bold"), text_color=s.text_primary, anchor="w")
-        actions_lbl.pack(fill="x", padx=12, pady=(10, 6))
-        self._reg(actions_lbl, lambda w, s: w.configure(text_color=s.text_primary))
-
-        self._compact_check_btn = ctk.CTkButton(
-            actions_panel, text=self._i18n.t("power.check_now"),
-            height=40, font=ctk.CTkFont(size=14, weight="bold"),
-            command=lambda: [self._btn_press_flash(self._compact_check_btn), self._check_now()])
-        apply_btn_style(self._compact_check_btn, s)
-        self._compact_check_btn.pack(fill="x", padx=12)
-        self._reg(self._compact_check_btn, apply_btn_style)
-
-        interval_row = ctk.CTkFrame(actions_panel, fg_color="transparent", height=30)
-        interval_row.pack(fill="x", padx=12, pady=(10, 0))
-        interval_row.pack_propagate(False)
-
-        int_lbl = ctk.CTkLabel(
-            interval_row, text=self._i18n.t("power.interval"),
-            font=ctk.CTkFont(size=12), text_color=s.text_secondary, width=58, anchor="w")
-        int_lbl.pack(side="left")
-        self._reg(int_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
-
-        self._compact_interval_entry = ctk.CTkEntry(
-            interval_row, width=52, height=28, font=ctk.CTkFont(size=14))
-        apply_entry(self._compact_interval_entry, s)
-        self._compact_interval_entry.pack(side="left")
-        self._compact_interval_entry.insert(0, str(self.cfg["check_interval"]))
-        self._compact_interval_entry.bind("<Return>", lambda e: self._apply_interval())
-        self._reg(self._compact_interval_entry, apply_entry)
-
-        s_lbl = ctk.CTkLabel(
-            interval_row, text=self._i18n.t("power.seconds"),
-            font=ctk.CTkFont(size=12), text_color=s.text_muted, width=18)
-        s_lbl.pack(side="left", padx=(3, 6))
-        self._reg(s_lbl, lambda w, s: w.configure(text_color=s.text_muted))
-
-        self._compact_apply_btn = ctk.CTkButton(
-            interval_row, text=self._i18n.t("general.apply"), width=54, height=28,
-            font=ctk.CTkFont(size=12), command=self._apply_interval)
-        apply_btn_style(self._compact_apply_btn, s)
-        self._compact_apply_btn.pack(side="left")
-        self._reg(self._compact_apply_btn, apply_btn_style)
-
-        self._compact_monitor_switch = ctk.CTkSwitch(
-            actions_panel, text=self._i18n.t("power.auto_monitor"),
-            font=ctk.CTkFont(size=12), command=self._toggle_monitor)
-        apply_switch(self._compact_monitor_switch, s)
-        self._compact_monitor_switch.pack(anchor="w", padx=12, pady=(10, 12))
-        if self.cfg["monitor_enabled"]:
-            self._compact_monitor_switch.select()
-        self._reg(self._compact_monitor_switch, apply_switch)
-
-        # Result line
-        self._compact_result_label = ctk.CTkLabel(
-            card, text="", font=ctk.CTkFont(size=12),
-            text_color=s.text_secondary, anchor="w", height=20)
-        self._compact_result_label.pack(fill="x", padx=14, pady=(0, 8))
-        self._reg(self._compact_result_label, lambda w, s: w.configure(text_color=s.text_secondary))
-
-        # Sync dropdowns with current state
-        self._populate_compact_target_dropdown()
-
-    def _populate_compact_target_dropdown(self):
-        """Sync compact view target dropdown with power plans."""
-        plans = get_all_plans()
-        values: List[str] = [AUTO_TARGET_LABEL]
-        self._compact_target_map: Dict[str, Optional[str]] = {AUTO_TARGET_LABEL: None}
-        for p in plans:
-            marker = "✓ " if p.is_acceptable else ""
-            label = f"{marker}{p.name}"
-            values.append(label)
-            self._compact_target_map[label] = p.guid
-        fit_option_width(self._compact_target_dd, values, min_width=120, max_width=280)
-        self._compact_target_dd.configure(values=values)
-
-        saved_guid = self.cfg.get("target_guid", "")
-        if saved_guid:
-            for p in plans:
-                if p.guid == saved_guid:
-                    marker = "✓ " if p.is_acceptable else ""
-                    self._compact_target_dd.set(f"{marker}{p.name}")
-                    return
-        self._compact_target_dd.set(AUTO_TARGET_LABEL)
-
-    def _on_compact_target_changed(self, choice: str):
-        """Handle target plan change in compact view — sync to full view."""
-        self._target_dropdown.set(choice)
-        self._on_target_changed(choice)
-
-    def _sync_compact_ui(self):
-        """Sync compact view labels with full-view state."""
-        if self._compact_frame is None:
-            return
-        # Active plan
-        self._compact_active_value.configure(text=self._power_active_value.cget("text"))
-        # Status badge
-        self._compact_status_badge.configure(
-            text=self._power_status_badge.cget("text"),
-            text_color=self._power_status_badge.cget("text_color"))
-        # Result
-        self._compact_result_label.configure(text=self._check_result_label.cget("text"))
-        # Style dropdown
-        self._compact_style_dd.set(self._style_dropdown.get())
-        # Target plan
-        if hasattr(self, "_compact_target_dd") and self._compact_target_dd.winfo_exists():
-            self._compact_target_dd.set(self._target_dropdown.get())
-        # Interval
-        self._compact_interval_entry.delete(0, "end")
-        self._compact_interval_entry.insert(0, str(self.cfg["check_interval"]))
-        # Monitor switch
-        if self._monitor_running:
-            self._compact_monitor_switch.select()
-        else:
-            self._compact_monitor_switch.deselect()
-        self._update_mode_switch_texts()
-
-    def _toggle_compact_mode(self):
-        """Switch between full window and compact power-only window."""
-        self._set_compact_mode(not self._compact_mode)
-
-    def _set_compact_mode(self, compact: bool):
-        """Apply compact/full mode without rebuilding widgets."""
-        if self._compact_mode == compact:
-            self._update_mode_switch_texts()
-            return
-
-        self._remember_geometry_for_mode()
-        self._compact_mode = compact
-
-        if compact:
-            self._sidebar.pack_forget()
-            self._main_frame_ref.place_forget()
-            self._compact_frame.pack(fill="both", expand=True)
-            self.minsize(460, 380)
-        else:
-            self._compact_frame.pack_forget()
-            self._sidebar.pack(side="left", fill="y")
-            self._sidebar.pack_propagate(False)
-            if self._sidebar_expanded:
-                content_w = max(self.winfo_width() - SIDEBAR_EXPANDED, 100)
-                self._main_frame_ref.configure(width=content_w)
-                self._main_frame_ref.place(x=SIDEBAR_EXPANDED, y=0, relheight=1.0)
-            else:
-                content_w = max(self.winfo_width() - SIDEBAR_COLLAPSED, 100)
-                self._main_frame_ref.configure(width=content_w)
-                self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
-            self._main_frame_ref.lift()
-            self.minsize(680, 480)
-            self._snap_main_to_sidebar()
-
-        self._update_mode_switch_texts()
-        self._apply_geometry_for_mode()
-        self._sync_compact_ui()
-        self._refresh_power_status()
 
     def _build_compact_view(self):
         """Build a tiny titlebar-free compact controller."""
@@ -1534,7 +1219,7 @@ class App(ctk.CTk):
                 self._main_frame_ref.configure(width=content_w)
                 self._main_frame_ref.place(x=SIDEBAR_COLLAPSED, y=0, relheight=1.0)
             self._main_frame_ref.lift()
-            self.minsize(680, 480)
+            self.minsize(620, 420)
 
         self._update_mode_switch_texts()
         self._apply_geometry_for_mode()
@@ -1573,19 +1258,19 @@ class App(ctk.CTk):
             self._compact_lang_btn.configure(text=self._i18n.t("compact.switch_language"))
         if hasattr(self, "_compact_style_btn") and self._compact_style_btn.winfo_exists():
             self._compact_style_btn.configure(text=self._i18n.t("compact.switch_style"))
-        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=118,
-                         max_width=SIDEBAR_EXPANDED - 24)
+        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=100,
+                         max_width=SIDEBAR_EXPANDED - 20)
         fit_option_width(self._lang_dropdown, [LANG_LABELS[l] for l in SUPPORTED_LANGS],
-                         min_width=96, max_width=SIDEBAR_EXPANDED - 24)
-        fit_entry_width(self._interval_entry, min_width=52, max_width=92, padding=30)
-        fit_entry_width(self._startup_name_entry, min_width=112, max_width=190, padding=34)
-        fit_entry_width(self._startup_path_entry, min_width=180, max_width=430, padding=38)
-        fit_button_width(self._apply_interval_btn, min_width=56, max_width=96)
-        fit_button_width(self._check_btn, min_width=92, max_width=180)
-        fit_button_width(self._startup_refresh_btn, min_width=62, max_width=120)
-        fit_button_width(self._startup_add_btn, min_width=70, max_width=126)
-        fit_button_width(self._startup_add_self_btn, min_width=92, max_width=160)
-        fit_button_width(self._startup_remove_self_btn, min_width=92, max_width=170)
+                         min_width=80, max_width=SIDEBAR_EXPANDED - 20)
+        fit_entry_width(self._interval_entry, min_width=48, max_width=80, padding=28)
+        fit_entry_width(self._startup_name_entry, min_width=90, max_width=160, padding=28)
+        fit_entry_width(self._startup_path_entry, min_width=140, max_width=350, padding=32)
+        fit_button_width(self._apply_interval_btn, min_width=50, max_width=80)
+        fit_button_width(self._check_btn, min_width=80, max_width=160)
+        fit_button_width(self._startup_refresh_btn, min_width=50, max_width=90)
+        fit_button_width(self._startup_add_btn, min_width=54, max_width=100)
+        fit_button_width(self._startup_add_self_btn, min_width=74, max_width=130)
+        fit_button_width(self._startup_remove_self_btn, min_width=74, max_width=140)
         if hasattr(self, "_compact_plan_btn") and self._compact_plan_btn.winfo_exists():
             fit_button_width(self._compact_plan_btn, min_width=88, max_width=132, padding=14)
         if hasattr(self, "_compact_lang_btn") and self._compact_lang_btn.winfo_exists():
@@ -1751,7 +1436,7 @@ class App(ctk.CTk):
 
         # Name
         name_lbl = ctk.CTkLabel(row, text=item.name,
-                                font=ctk.CTkFont(size=14, weight="bold"),
+                                font=ctk.CTkFont(size=12, weight="bold"),
                                 text_color=s.text_primary, anchor="w")
         self._reg(name_lbl, lambda w, s: w.configure(text_color=s.text_primary))
 
@@ -1759,13 +1444,13 @@ class App(ctk.CTk):
         path_text = item.path
         if len(path_text) > 60:
             path_text = "..." + path_text[-57:]
-        path_lbl = ctk.CTkLabel(row, text=path_text, font=ctk.CTkFont(size=13),
+        path_lbl = ctk.CTkLabel(row, text=path_text, font=ctk.CTkFont(size=11),
                                 text_color=s.text_secondary, anchor="w")
         self._reg(path_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
 
         # Source
         src_lbl = ctk.CTkLabel(row, text=self._format_startup_source(item.source),
-                               font=ctk.CTkFont(size=13),
+                               font=ctk.CTkFont(size=11),
                                text_color=s.text_muted, anchor="center")
         self._reg(src_lbl, lambda w, s: w.configure(text_color=s.text_muted))
 
@@ -1773,8 +1458,8 @@ class App(ctk.CTk):
         action_frame = ctk.CTkFrame(row, fg_color="transparent")
 
         open_btn = ctk.CTkButton(
-            action_frame, text=self._i18n.t("startup.location_btn"), width=42, height=20,
-            font=ctk.CTkFont(size=12),
+            action_frame, text=self._i18n.t("startup.location_btn"), width=38, height=18,
+            font=ctk.CTkFont(size=11),
             fg_color=s.card_elevated, hover_color=s.accent,
             text_color=s.text_secondary, corner_radius=3,
             command=lambda it=item: self._open_startup_location(it))
@@ -1784,8 +1469,8 @@ class App(ctk.CTk):
             text_color=s.text_secondary))
 
         remove_btn = ctk.CTkButton(
-            action_frame, text=self._i18n.t("startup.remove_btn"), width=34, height=20,
-            font=ctk.CTkFont(size=12),
+            action_frame, text=self._i18n.t("startup.remove_btn"), width=30, height=18,
+            font=ctk.CTkFont(size=11),
             fg_color=s.card_elevated, hover_color=s.error,
             text_color=s.text_secondary, corner_radius=3,
             command=lambda it=item: self._remove_startup_item(it))
@@ -1832,31 +1517,6 @@ class App(ctk.CTk):
             self._render_startup_items(self._sorted_startup_items())
         else:
             self._refresh_startup_list()
-
-    def _update_sort_indicator(self):
-        """Update column header labels to show sort direction (▲/▼)."""
-        col_i18n = {"name": "startup.col_name", "path": "startup.col_path",
-                     "source": "startup.col_source", "action": "startup.col_action"}
-        for key, (lbl, _, _) in self._col_header_widgets.items():
-            base = self._i18n.t(col_i18n.get(key, key))
-            if key == self._sort_key:
-                arrow = " ▲" if self._sort_ascending else " ▼"
-                lbl_text = base + arrow
-            else:
-                lbl_text = base
-            lbl.configure(text=lbl_text)
-
-    def _update_sort_indicator(self):
-        """Update sortable column labels to show direction beside the text."""
-        col_i18n = {"name": "startup.col_name", "path": "startup.col_path",
-                     "source": "startup.col_source", "action": "startup.col_action"}
-        for key, (lbl, _, _) in self._col_header_widgets.items():
-            base = self._i18n.t(col_i18n.get(key, key))
-            if key == self._sort_key:
-                arrow = " ↑" if self._sort_ascending else " ↓"
-                lbl.configure(text=base + arrow)
-            else:
-                lbl.configure(text=base)
 
     def _update_sort_indicator(self):
         """Update sortable column labels to show direction beside the text."""
@@ -2011,10 +1671,10 @@ class App(ctk.CTk):
     def _update_self_buttons(self, items=None):
         if self._has_self_in_startup(items):
             self._startup_add_self_btn.pack_forget()
-            self._startup_remove_self_btn.pack(side="left", padx=(0, 10), pady=10)
+            self._startup_remove_self_btn.pack(side="left", padx=(0, 8), pady=6)
         else:
             self._startup_remove_self_btn.pack_forget()
-            self._startup_add_self_btn.pack(side="left", padx=(0, 10), pady=10)
+            self._startup_add_self_btn.pack(side="left", padx=(0, 8), pady=6)
 
     def _surgically_add_row(self, item: StartupItem):
         item_key = self._make_item_key(item)
@@ -2136,8 +1796,6 @@ class App(ctk.CTk):
         self._target_dropdown.configure(values=values)
         if current in values:
             self._target_dropdown.set(current)
-            if self._compact_mode:
-                self._populate_compact_target_dropdown()
             return
 
         target_guid = self.power_monitor.target_guid or self.cfg.get("target_guid", "")
@@ -2145,12 +1803,8 @@ class App(ctk.CTk):
             for label, guid in self._target_guid_map.items():
                 if guid == target_guid:
                     self._target_dropdown.set(label)
-                    if self._compact_mode:
-                        self._populate_compact_target_dropdown()
                     return
         self._target_dropdown.set(AUTO_TARGET_LABEL)
-        if self._compact_mode:
-            self._populate_compact_target_dropdown()
 
     def _update_power_ui(self, active, plans=None):
         s = self._style
@@ -2269,8 +1923,8 @@ class App(ctk.CTk):
             self.after(8000, lambda: self._status_bar.configure(text=""))
 
     def _apply_interval(self):
-        # Read from the right entry depending on mode
-        entry = self._compact_interval_entry if self._compact_mode else self._interval_entry
+        # Always read from the main interval entry
+        entry = self._interval_entry
         try:
             secs = int(entry.get().strip())
             secs = max(10, min(3600, secs))
@@ -2279,9 +1933,9 @@ class App(ctk.CTk):
             self.power_monitor.interval = secs
             self.cfg["check_interval"] = secs
             save_config(self.cfg)
-            # Sync other entry
-            other = self._interval_entry if self._compact_mode else self._compact_interval_entry
-            if other.winfo_exists():
+            # Sync compact entry if it exists
+            other = getattr(self, '_compact_interval_entry', None)
+            if other is not None and other.winfo_exists():
                 other.delete(0, "end")
                 other.insert(0, str(secs))
             self._show_check_result(
@@ -2298,23 +1952,14 @@ class App(ctk.CTk):
             return
         self._syncing_monitor_switch = True
         try:
-            main_on = self._monitor_switch.get()
-            compact_switch = getattr(self, "_compact_monitor_switch", None)
-            compact_on = (compact_switch is not None
-                          and compact_switch.winfo_exists()
-                          and compact_switch.get())
-            if main_on or compact_on:
+            if self._monitor_switch.get():
                 self._start_monitor()
             else:
                 self._stop_monitor()
             if self._monitor_running:
                 self._monitor_switch.select()
-                if compact_switch is not None and compact_switch.winfo_exists():
-                    compact_switch.select()
             else:
                 self._monitor_switch.deselect()
-                if compact_switch is not None and compact_switch.winfo_exists():
-                    compact_switch.deselect()
         finally:
             self._syncing_monitor_switch = False
 
