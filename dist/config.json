@@ -3,13 +3,17 @@
   "language": "zh",
   "monitor_enabled": true,
   "check_interval": 60,
-  "target_guid": "bfc4ac38-0621-4fcb-8781-c8ae6504897b",
+  "target_guid": "c3090681-fe1a-4140-8f48-bf1a0fbfa500",
   "minimize_to_tray": true,
   "start_to_tray": true,
   "col_widths": [
     0.23561403508771928,
-    0.4343859649122807,
-    0.12,
+    0.40200644683999154,
+    0.15237951807228917,
     0.18
+  ],
+  "setup_completed": true,
+  "unsupported_targets": [
+    "e9a42b02-d5df-448d-aa00-03f14749eb61"
   ]
 }

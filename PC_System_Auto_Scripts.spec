@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['E:\\ACM\\AI_Script\\github\\PC_System_Auto_Scripts\\main.py'],
+    ['E:\\dev\\my_projects\\Vibe Coding\\PC_System_Auto_Scripts\\main.py'],
     pathex=[],
     binaries=[],
     datas=[],

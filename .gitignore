@@ -6,6 +6,15 @@ __pycache__/
 # PyInstaller build artifacts
 build/
 
+# Runtime data produced next to the app (portable install)
+pc_auto_scripts.log
+pc_auto_scripts.log.*
+startup_backups/
+startup_backups.json
+
+# Dev-only UI screenshots
+shot/
+
 # IDE
 .vscode/
 .idea/
