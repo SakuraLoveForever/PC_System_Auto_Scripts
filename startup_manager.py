@@ -641,8 +641,8 @@ def get_app_exe_path() -> str:
 def build_self_startup_command() -> str:
     """Correct startup command for this app, quoting each path separately."""
     if getattr(sys, "frozen", False):
-        return _build_registry_command(str(Path(sys.executable).resolve()))
+        return _build_registry_command(str(Path(sys.executable).resolve()), "--startup")
     script = _script_path()
     if script.suffix.lower() == ".py":
-        return _build_registry_command(str(Path(sys.executable).resolve()), f'"{script}"')
-    return _build_registry_command(str(script))
+        return _build_registry_command(str(Path(sys.executable).resolve()), f'"{script}" --startup')
+    return _build_registry_command(str(script), "--startup")

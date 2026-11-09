@@ -237,12 +237,13 @@ class StartupTestCase(unittest.TestCase):
             command = sm.build_self_startup_command()
         self.assertIn('"C:\\Python 3\\python.exe"', command)
         self.assertIn(str(Path("main.py").resolve()), command)
+        self.assertTrue(command.endswith(" --startup"))
 
     def test_self_command_for_frozen_exe(self):
         with mock.patch.object(sm.sys, "frozen", True, create=True), \
              mock.patch.object(sm.sys, "executable", r"C:\Apps\My App\app.exe"):
             command = sm.build_self_startup_command()
-        self.assertEqual(command, r'"C:\Apps\My App\app.exe"')
+        self.assertEqual(command, r'"C:\Apps\My App\app.exe" --startup')
 
     def test_self_command_falls_back_when_argv0_is_a_python_flag(self):
         # `python -c ...` or an interactive session must not produce '-c' as the target.

@@ -1,4 +1,4 @@
-"""Internationalization: Chinese / English translations."""
+"""Chinese interface strings."""
 
 from __future__ import annotations
 
@@ -6,544 +6,383 @@ from typing import Dict
 
 # All translatable strings
 T: Dict[str, Dict[str, str]] = {
-    # App title / branding
     "app.title": {
-        "zh": "PC 系统自动脚本",
-        "en": "PC System Auto Scripts",
+        "zh": "PC 系统自动脚本"
     },
     "app.subtitle": {
-        "zh": "电源计划监控 & 启动项管理",
-        "en": "Power Plan Monitor & Startup Manager",
-    },
-
-    # Sidebar
-    "sidebar.style": {
-        "zh": "界面风格",
-        "en": "Style",
-    },
-    "sidebar.language": {
-        "zh": "语言",
-        "en": "Language",
+        "zh": "电源计划监控 & 启动项管理"
     },
     "sidebar.collapse": {
-        "zh": "收起",
-        "en": "Collapse",
-    },
-    "sidebar.appearance": {
-        "zh": "外观",
-        "en": "APPEARANCE",
+        "zh": "收起"
     },
     "sidebar.settings": {
-        "zh": "设置",
-        "en": "SETTINGS",
+        "zh": "设置"
     },
     "sidebar.expand": {
-        "zh": "展开",
-        "en": "Expand",
+        "zh": "展开"
     },
-
-    # Power card
     "power.title": {
-        "zh": "电源计划监控",
-        "en": "Power Plan Monitor",
+        "zh": "电源计划监控"
     },
     "power.active_plan": {
-        "zh": "当前方案",
-        "en": "Active Plan",
+        "zh": "当前方案"
     },
     "power.target_plan": {
-        "zh": "目标方案",
-        "en": "Target Plan",
+        "zh": "目标方案"
     },
     "power.interval": {
-        "zh": "检查间隔",
-        "en": "Interval",
+        "zh": "检查间隔"
     },
     "power.seconds": {
-        "zh": "秒",
-        "en": "s",
+        "zh": "秒"
     },
     "power.check_now": {
-        "zh": "立即检查",
-        "en": "Check Now",
+        "zh": "立即检查"
     },
     "power.auto_monitor": {
-        "zh": "自动监控",
-        "en": "Auto Monitor",
+        "zh": "自动监控"
     },
     "power.status_ok": {
-        "zh": "正常",
-        "en": "OK",
+        "zh": "正常"
     },
     "power.status_needs_fix": {
-        "zh": "需修复",
-        "en": "Needs Fix",
+        "zh": "需修复"
     },
     "power.status_error": {
-        "zh": "错误",
-        "en": "Error",
+        "zh": "错误"
     },
     "power.status_checking": {
-        "zh": "检查中...",
-        "en": "Checking...",
+        "zh": "检查中..."
     },
     "power.unable_detect": {
-        "zh": "无法检测",
-        "en": "Unable to detect",
+        "zh": "无法检测"
     },
     "power.switched": {
-        "zh": "已从「{from_}」切换至「{to}」",
-        "en": "Switched from '{from_}' to '{to}'",
+        "zh": "已从「{from_}」切换至「{to}」"
     },
     "power.already_ok": {
-        "zh": "电源方案正确：{name}",
-        "en": "Power plan is correct: {name}",
+        "zh": "电源方案正确：{name}"
     },
     "power.switch_failed": {
-        "zh": "切换失败：{name}",
-        "en": "Failed to switch from '{name}'",
+        "zh": "切换失败：{name}"
     },
     "power.no_target": {
-        "zh": "未找到高性能/卓越性能方案，可能需要管理员权限或设备支持",
-        "en": "No High/Ultimate Performance plan found. Admin permission or device support may be required.",
+        "zh": "未找到高性能/卓越性能方案，可能需要管理员权限或设备支持"
     },
     "power.target_missing": {
-        "zh": "目标方案已不存在（GUID {guid}…），请重新选择目标或改为自动",
-        "en": "The selected target plan no longer exists (GUID {guid}…). Pick a new target or switch to Auto.",
+        "zh": "目标方案已不存在（GUID {guid}…），请重新选择目标或改为自动"
     },
     "power.target_missing_option": {
-        "zh": "⚠ 目标已失效 ({guid})",
-        "en": "⚠ Missing target ({guid})",
+        "zh": "⚠ 目标已失效 ({guid})"
     },
     "power.status_target_missing": {
-        "zh": "目标失效",
-        "en": "Target Missing",
+        "zh": "目标失效"
     },
     "power.check_busy": {
-        "zh": "已有一次检查正在进行，请稍候查看结果",
-        "en": "A power check is already running; the result will appear here.",
+        "zh": "已有一次检查正在进行，请稍候查看结果"
     },
     "power.read_failed": {
-        "zh": "读取电源方案失败：{reason}",
-        "en": "Could not read power plans: {reason}",
+        "zh": "读取电源方案失败：{reason}"
     },
     "power.error_timeout": {
-        "zh": "powercfg 响应超时",
-        "en": "powercfg timed out",
+        "zh": "powercfg 响应超时"
     },
     "power.error_permission": {
-        "zh": "权限不足，请以管理员身份运行",
-        "en": "Permission denied — try running as administrator",
+        "zh": "权限不足，请以管理员身份运行"
     },
     "power.error_unavailable": {
-        "zh": "powercfg 不可用",
-        "en": "powercfg is unavailable",
+        "zh": "powercfg 不可用"
     },
     "power.error_not_found": {
-        "zh": "指定的电源方案不存在",
-        "en": "The requested power plan does not exist",
+        "zh": "指定的电源方案不存在"
     },
     "power.error_other": {
-        "zh": "未知错误",
-        "en": "Unknown error",
+        "zh": "未知错误"
     },
     "power.error_not_supported": {
-        "zh": "该方案不受支持（Windows 拒绝将其设为当前方案）",
-        "en": "Windows refuses to activate this scheme (not supported)",
+        "zh": "该方案不受支持（Windows 拒绝将其设为当前方案）"
     },
     "power.skipped_plans": {
-        "zh": "已跳过不可用方案：{names}",
-        "en": "Skipped unusable plan(s): {names}",
+        "zh": "已跳过不可用方案：{names}"
     },
     "power.target_unusable": {
-        "zh": "目标「{name}」({guid}) 是 Windows 无法激活的内置模板，请在下方重新选择目标方案（推荐 Auto）",
-        "en": "Target '{name}' ({guid}) is a Windows template that cannot be activated — pick another target below (Auto is recommended).",
+        "zh": "目标「{name}」({guid}) 是 Windows 无法激活的内置模板，请在下方重新选择目标方案（推荐 Auto）"
     },
     "power.create_schemes_btn": {
-        "zh": "创建性能方案",
-        "en": "Create Plans",
+        "zh": "创建性能方案"
     },
     "power.create_running": {
-        "zh": "正在创建缺失的性能方案…",
-        "en": "Creating missing performance plans…",
+        "zh": "正在创建缺失的性能方案…"
     },
     "power.create_created": {
-        "zh": "已创建：{names}",
-        "en": "Created: {names}",
+        "zh": "已创建：{names}"
     },
     "power.create_existing": {
-        "zh": "已存在：{names}",
-        "en": "Already present: {names}",
+        "zh": "已存在：{names}"
     },
     "power.create_failed_items": {
-        "zh": "失败：{names}",
-        "en": "Failed: {names}",
+        "zh": "失败：{names}"
     },
     "power.create_failed": {
-        "zh": "创建电源方案失败：{reason}",
-        "en": "Creating power plans failed: {reason}",
+        "zh": "创建电源方案失败：{reason}"
     },
     "power.create_nothing": {
-        "zh": "没有需要创建的方案",
-        "en": "Nothing to create.",
+        "zh": "没有需要创建的方案"
     },
     "power.monitor_start_failed": {
-        "zh": "监控启动失败，请查看日志",
-        "en": "Could not start the monitor — see the log file.",
+        "zh": "监控启动失败，请查看日志"
     },
     "power.monitor_stopped_unexpectedly": {
-        "zh": "监控线程已意外停止，可用上方开关重新启动",
-        "en": "The monitor worker stopped unexpectedly. Use the switch above to restart it.",
+        "zh": "监控线程已意外停止，可用上方开关重新启动"
     },
     "power.monitor_started": {
-        "zh": "电源计划监控已启动",
-        "en": "Power plan monitor started.",
+        "zh": "电源计划监控已启动"
     },
     "power.monitor_stopped": {
-        "zh": "电源计划监控已停止",
-        "en": "Power plan monitor stopped.",
+        "zh": "电源计划监控已停止"
     },
-
-    # Startup card
     "startup.title": {
-        "zh": "启动项管理",
-        "en": "Startup Items",
+        "zh": "启动项管理"
     },
     "startup.entries": {
-        "zh": "个条目",
-        "en": " entries",
+        "zh": "个条目"
     },
     "startup.col_name": {
-        "zh": "名称",
-        "en": "Name",
+        "zh": "名称"
     },
     "startup.col_path": {
-        "zh": "路径",
-        "en": "Path",
+        "zh": "路径"
     },
     "startup.col_source": {
-        "zh": "来源",
-        "en": "Source",
+        "zh": "来源"
     },
     "startup.col_action": {
-        "zh": "操作",
-        "en": "Action",
+        "zh": "操作"
     },
     "startup.source_all": {
-        "zh": "全部来源",
-        "en": "All Sources",
+        "zh": "全部来源"
     },
     "startup.source_registry": {
-        "zh": "当前用户 Run",
-        "en": "HKCU Run",
+        "zh": "当前用户 Run"
     },
     "startup.source_registry_hklm": {
-        "zh": "全局 Run",
-        "en": "HKLM Run",
+        "zh": "全局 Run"
     },
     "startup.source_registry_hklm_wow6432": {
-        "zh": "32 位全局 Run",
-        "en": "HKLM Wow6432 Run",
+        "zh": "32 位全局 Run"
     },
     "startup.source_startup_folder": {
-        "zh": "用户启动文件夹",
-        "en": "Startup Folder",
+        "zh": "用户启动文件夹"
     },
     "startup.source_startup_folder_common": {
-        "zh": "公共启动文件夹",
-        "en": "Common Startup",
+        "zh": "公共启动文件夹"
     },
-    # Short tags for the narrow "source" table column; the full label above is
-    # used by the filter dropdown and the row tooltip.
     "startup.tag_registry": {
-        "zh": "HKCU",
-        "en": "HKCU",
+        "zh": "HKCU"
     },
     "startup.tag_registry_hklm": {
-        "zh": "HKLM",
-        "en": "HKLM",
+        "zh": "HKLM"
     },
     "startup.tag_registry_hklm_wow6432": {
-        "zh": "HKLM32",
-        "en": "HKLM32",
+        "zh": "HKLM32"
     },
     "startup.tag_startup_folder": {
-        "zh": "启动夹",
-        "en": "Startup",
+        "zh": "启动夹"
     },
     "startup.tag_startup_folder_common": {
-        "zh": "公共夹",
-        "en": "Common",
+        "zh": "公共夹"
     },
     "startup.name_placeholder": {
-        "zh": "条目名称",
-        "en": "Entry name",
+        "zh": "条目名称"
     },
     "startup.path_placeholder": {
-        "zh": "程序路径...",
-        "en": "Program path...",
+        "zh": "程序路径..."
     },
     "startup.add_btn": {
-        "zh": "＋ 添加",
-        "en": "+ Add",
+        "zh": "＋ 添加"
     },
     "startup.add_self_btn": {
-        "zh": "＋ 添加本程序",
-        "en": "+ This App",
+        "zh": "＋ 添加本程序"
     },
     "startup.remove_self_btn": {
-        "zh": "－ 移除本程序",
-        "en": "- This App",
+        "zh": "－ 移除本程序"
     },
     "startup.remove_self": {
-        "zh": "已从启动项移除本程序",
-        "en": "Removed this app from startup.",
+        "zh": "已从启动项移除本程序"
     },
     "startup.refresh_btn": {
-        "zh": "刷新",
-        "en": "Refresh",
+        "zh": "刷新"
     },
     "startup.remove_btn": {
-        "zh": "删除",
-        "en": "Del",
+        "zh": "删除"
     },
     "startup.location_btn": {
-        "zh": "位置",
-        "en": "Open",
+        "zh": "位置"
     },
     "startup.empty": {
-        "zh": "未找到启动项",
-        "en": "No startup items found.",
+        "zh": "未找到启动项"
     },
     "startup.added": {
-        "zh": "已添加「{name}」到启动项",
-        "en": "Added '{name}' to startup.",
+        "zh": "已添加「{name}」到启动项"
     },
     "startup.add_failed": {
-        "zh": "添加启动项失败",
-        "en": "Failed to add startup item.",
+        "zh": "添加启动项失败"
     },
     "startup.removed": {
-        "zh": "已移除「{name}」",
-        "en": "Removed '{name}'.",
+        "zh": "已移除「{name}」"
     },
     "startup.remove_failed": {
-        "zh": "移除「{name}」失败",
-        "en": "Failed to remove '{name}'.",
+        "zh": "移除「{name}」失败"
     },
     "startup.opened_location": {
-        "zh": "已打开「{name}」所在位置",
-        "en": "Opened location for '{name}'.",
+        "zh": "已打开「{name}」所在位置"
     },
     "startup.open_location_failed": {
-        "zh": "无法打开「{name}」所在位置",
-        "en": "Failed to open location for '{name}'.",
+        "zh": "无法打开「{name}」所在位置"
     },
     "startup.fill_both": {
-        "zh": "请填写名称和路径",
-        "en": "Please enter both name and path.",
+        "zh": "请填写名称和路径"
     },
     "startup.overwritten": {
-        "zh": "已覆盖同名启动项「{name}」",
-        "en": "Overwrote the existing startup item '{name}'.",
+        "zh": "已覆盖同名启动项「{name}」"
     },
     "startup.overwrite_cancelled": {
-        "zh": "已取消覆盖「{name}」",
-        "en": "Cancelled overwriting '{name}'.",
+        "zh": "已取消覆盖「{name}」"
     },
     "startup.unknown_source": {
-        "zh": "未知来源「{source}」，已拒绝操作",
-        "en": "Unknown source '{source}' — the operation was refused.",
+        "zh": "未知来源「{source}」，已拒绝操作"
     },
     "startup.read_failed": {
-        "zh": "读取启动项失败：{reason}",
-        "en": "Could not read startup items: {reason}",
+        "zh": "读取启动项失败：{reason}"
     },
     "startup.backup_ready": {
-        "zh": "可在标题栏点「恢复」撤销。",
-        "en": "Use Restore in the title bar to undo.",
+        "zh": "可在标题栏点「恢复」撤销。"
     },
     "startup.no_backup": {
-        "zh": "（未能生成备份）",
-        "en": "(no backup could be created)",
+        "zh": "（未能生成备份）"
     },
     "startup.restore_btn": {
-        "zh": "恢复 ({count})",
-        "en": "Restore ({count})",
+        "zh": "恢复 ({count})"
     },
     "startup.restored": {
-        "zh": "已恢复「{name}」",
-        "en": "Restored '{name}'.",
+        "zh": "已恢复「{name}」"
     },
     "startup.restore_failed": {
-        "zh": "恢复「{name}」失败",
-        "en": "Failed to restore '{name}'.",
+        "zh": "恢复「{name}」失败"
     },
     "startup.nothing_to_restore": {
-        "zh": "没有可恢复的启动项",
-        "en": "Nothing to restore.",
+        "zh": "没有可恢复的启动项"
     },
     "startup.added_self": {
-        "zh": "已将本程序添加到启动项",
-        "en": "Added this app to startup.",
+        "zh": "已将本程序添加到启动项"
     },
     "startup.interval_invalid": {
-        "zh": "请输入有效的间隔秒数",
-        "en": "Invalid interval value.",
+        "zh": "请输入有效的间隔秒数"
     },
     "startup.interval_set": {
-        "zh": "检查间隔已设为 {secs} 秒",
-        "en": "Check interval set to {secs}s.",
+        "zh": "检查间隔已设为 {secs} 秒"
     },
-
-    # Close behavior
     "tray.minimize_to_tray": {
-        "zh": "关闭时隐藏到托盘",
-        "en": "Minimize to tray on close",
+        "zh": "关闭时隐藏到托盘"
     },
-
-    # Tray
     "tray.show": {
-        "zh": "显示窗口",
-        "en": "Show",
+        "zh": "显示窗口"
     },
     "tray.check": {
-        "zh": "立即检查电源",
-        "en": "Check Power Now",
+        "zh": "立即检查电源"
     },
     "tray.exit": {
-        "zh": "退出",
-        "en": "Exit",
+        "zh": "退出"
     },
-
-    # Compact mode
     "compact.toggle": {
-        "zh": "精简",
-        "en": "Compact",
+        "zh": "精简"
     },
     "compact.full": {
-        "zh": "完整",
-        "en": "Full",
+        "zh": "完整"
     },
     "compact.current_plan": {
-        "zh": "当前",
-        "en": "Current",
+        "zh": "当前"
     },
     "compact.switch_power": {
-        "zh": "切换电源",
-        "en": "Switch Power",
+        "zh": "切换电源"
     },
-    "compact.switch_language": {
-        "zh": "切换语言",
-        "en": "Switch Language",
-    },
-    "compact.switch_style": {
-        "zh": "切换外观",
-        "en": "Switch Style",
-    },
-
-    # General
     "general.ok": {
-        "zh": "确定",
-        "en": "OK",
+        "zh": "确定"
     },
     "general.cancel": {
-        "zh": "取消",
-        "en": "Cancel",
+        "zh": "取消"
     },
     "general.apply": {
-        "zh": "应用",
-        "en": "Apply",
+        "zh": "应用"
     },
-
-    # Dialogs
     "dialog.overwrite_title": {
-        "zh": "覆盖同名启动项？",
-        "en": "Overwrite startup item?",
+        "zh": "覆盖同名启动项？"
     },
     "dialog.overwrite_body": {
-        "zh": "名为「{name}」的启动项已存在。\n\n现有命令：\n{old}\n\n新命令：\n{new}\n\n继续将覆盖现有条目。",
-        "en": "A startup item named '{name}' already exists.\n\nCurrent command:\n{old}\n\nNew command:\n{new}\n\nContinuing will overwrite the existing entry.",
+        "zh": "名为「{name}」的启动项已存在。\n\n现有命令：\n{old}\n\n新命令：\n{new}\n\n继续将覆盖现有条目。"
     },
     "dialog.remove_title": {
-        "zh": "删除启动项？",
-        "en": "Remove startup item?",
+        "zh": "删除启动项？"
     },
     "dialog.remove_body": {
-        "zh": "将从系统中移除以下启动项：\n\n名称：{name}\n来源：{source}\n命令/文件：\n{target}\n\n删除前会自动保存备份，可用「恢复」撤销。",
-        "en": "The following startup item will be removed:\n\nName: {name}\nSource: {source}\nCommand/file:\n{target}\n\nA backup is saved first so this can be undone with Restore.",
+        "zh": "将从系统中移除以下启动项：\n\n名称：{name}\n来源：{source}\n命令/文件：\n{target}\n\n删除前会自动保存备份，可用「恢复」撤销。"
     },
     "dialog.restore_title": {
-        "zh": "恢复启动项？",
-        "en": "Restore startup item?",
+        "zh": "恢复启动项？"
     },
     "dialog.restore_body": {
-        "zh": "将恢复最近删除的启动项：\n\n名称：{name}\n位置：\n{target}",
-        "en": "The most recently removed startup item will be restored:\n\nName: {name}\nLocation:\n{target}",
+        "zh": "将恢复最近删除的启动项：\n\n名称：{name}\n位置：\n{target}"
     },
-
-    # First-run setup
     "setup.title": {
-        "zh": "首次运行设置",
-        "en": "First-run setup",
+        "zh": "首次运行设置"
     },
     "setup.current": {
-        "zh": "当前电源方案：{name}",
-        "en": "Current power plan: {name}",
+        "zh": "当前电源方案：{name}"
     },
     "setup.explain": {
-        "zh": "本工具可以在方案偏离目标时自动切换。读取不会修改系统；只有你启用监控或手动切换/创建方案时才会改动电源设置。",
-        "en": "This tool can switch plans automatically when they drift from your target. Reading never changes the system — power settings only change when you enable monitoring or explicitly switch/create a plan.",
+        "zh": "本工具可以在方案偏离目标时自动切换。读取不会修改系统；只有你启用监控或手动切换/创建方案时才会改动电源设置。"
     },
     "setup.read_error": {
-        "zh": "注意：{reason}",
-        "en": "Note: {reason}",
+        "zh": "注意：{reason}"
     },
     "setup.enable_monitor": {
-        "zh": "启用自动监控",
-        "en": "Enable auto monitoring",
+        "zh": "启用自动监控"
     },
     "setup.use_auto": {
-        "zh": "自动选择目标",
-        "en": "Auto target",
+        "zh": "自动选择目标"
     },
     "setup.pick_plan": {
-        "zh": "手动选择目标",
-        "en": "Pick target",
+        "zh": "手动选择目标"
     },
     "setup.pick_title": {
-        "zh": "选择目标电源方案",
-        "en": "Choose target power plan",
+        "zh": "选择目标电源方案"
     },
     "setup.skip": {
-        "zh": "稍后再说",
-        "en": "Later",
+        "zh": "稍后再说"
     },
     "setup.done": {
-        "zh": "设置已保存",
-        "en": "Setup saved.",
+        "zh": "设置已保存"
     },
     "setup.no_performance_plan": {
-        "zh": "没有可用的高性能方案，可先用「创建性能方案」",
-        "en": "No performance plan available — try 'Create Plans' first.",
-    },
+        "zh": "没有可用的高性能方案，可先用「创建性能方案」"
+    }
 }
 
 DEFAULT_LANG = "zh"
-SUPPORTED_LANGS = ["zh", "en"]
-LANG_LABELS = {"zh": "中文", "en": "English"}
+SUPPORTED_LANGS = ["zh"]
+LANG_LABELS = {"zh": "中文"}
 
 
 class I18n:
     def __init__(self, lang: str = DEFAULT_LANG):
-        self.lang = lang
+        self.lang = DEFAULT_LANG
 
     def has(self, key: str) -> bool:
         return key in T
 
     def t(self, key: str, **kwargs) -> str:
         entry = T.get(key, {})
-        text = entry.get(self.lang) or entry.get("en", key)
+        text = entry.get("zh", key)
         if kwargs:
             text = text.format(**kwargs)
         return text

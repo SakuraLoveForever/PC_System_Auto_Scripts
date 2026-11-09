@@ -13,6 +13,7 @@ user's configuration or a pending "restore" backup.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 DIST_DIR = BASE_DIR / "dist"
 BUILD_DIR = BASE_DIR / "build"
+PACKAGE_DIR = BUILD_DIR / "package"
 NAME = "PC_System_Auto_Scripts"
 SPEC_FILE = BASE_DIR / f"{NAME}.spec"
 
@@ -31,13 +33,15 @@ CMD = [
     sys.executable,
     "-m",
     "PyInstaller",
-    "--onefile",
+    "--onedir",
+    "--distpath", str(PACKAGE_DIR),
     "--windowed",
     "--name", NAME,
     "--noconfirm",
     "--hidden-import", "pystray",
     "--hidden-import", "PIL",
     "--hidden-import", "PIL._tkinter_finder",
+    "--add-data", f"{BASE_DIR / 'assets' / 'rem'};assets/rem",
     str(BASE_DIR / "main.py"),
 ]
 
@@ -91,8 +95,19 @@ def main() -> None:
         print("\nBuild failed. Check errors above.", file=sys.stderr)
         sys.exit(1)
 
+    # Keep the existing executable path used by the user's Run registry entry.
+    # Directory mode loads runtime files directly, without extracting into TEMP.
+    shutil.copytree(PACKAGE_DIR / NAME / "_internal", DIST_DIR / "_internal", dirs_exist_ok=True)
+    shutil.copy2(PACKAGE_DIR / NAME / f"{NAME}.exe", DIST_DIR / f"{NAME}.exe")
+
     exe = DIST_DIR / f"{NAME}.exe"
+    if os.name == "nt":
+        # A workspace can be low-integrity. Only the locally built release
+        # executable should use the normal desktop integrity level.
+        subprocess.run(["icacls", str(exe), "/setintegritylevel", "M"],
+                       check=True, capture_output=True, text=True)
     print(f"\nBuild successful: {exe}")
+    print("Keep the _internal directory beside the executable.")
     print("Runtime data stays beside the exe: config.json, startup_backups/, "
           "pc_auto_scripts.log")
 

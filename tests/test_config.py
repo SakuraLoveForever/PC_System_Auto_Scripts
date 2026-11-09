@@ -48,6 +48,18 @@ class ConfigTestCase(unittest.TestCase):
 
     # --- P1.1: monitor_enabled must survive a restart ---------------------
 
+    def test_legacy_appearance_settings_migrate_to_chinese_rem(self):
+        self._write_config({"style": "Magic Dark", "language": "en", "monitor_enabled": False})
+        cfg = self.main.load_config()
+        self.assertEqual(cfg["style"], "Rem")
+        self.assertEqual(cfg["language"], "zh")
+        self.assertFalse(cfg["monitor_enabled"])
+
+    def test_manual_launch_shows_window_but_startup_can_use_tray(self):
+        self.assertFalse(self.main._should_start_to_tray({"start_to_tray": True}, []))
+        self.assertTrue(self.main._should_start_to_tray({"start_to_tray": True}, ["--startup"]))
+        self.assertFalse(self.main._should_start_to_tray({"start_to_tray": False}, ["--startup"]))
+
     def test_saved_monitor_disabled_is_respected(self):
         self._write_config({"monitor_enabled": False})
         cfg = self.main.load_config()

@@ -174,10 +174,17 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.assertEqual(self.switched, [], "a plain refresh must not call setactive")
         self.assertEqual(self.created, [], "a plain refresh must not call duplicatescheme")
 
-    def test_language_switch_never_modifies_system(self):
+    def test_chinese_only_and_theme_picker_present(self):
         self.switched.clear()
         self.created.clear()
-        self.app._cycle_language()
+        self.assertEqual(self.app._i18n.lang, "zh")
+        self.assertEqual(self.app._style.name, "Rem")
+        # English was dropped, so no language control exists; the theme picker
+        # does, because six design systems ship.
+        self.assertFalse(hasattr(self.app, "_lang_dropdown"))
+        self.assertTrue(hasattr(self.app, "_style_dropdown"))
+        self.app._toggle_sidebar()
+        self.app._toggle_sidebar()
         self._pump(0.3)
         self.assertEqual(self.switched, [])
         self.assertEqual(self.created, [])
@@ -587,71 +594,14 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.app.update_idletasks()
         self.assertFalse(self.app._status_bar.winfo_ismapped())
 
-    # --- hover tooltip must never be left behind ---------------------------
-
-    def _tooltip_alive(self) -> bool:
-        window = getattr(self.app, "_cell_tip", None)
-        try:
-            return window is not None and bool(window.winfo_exists())
-        except Exception:
-            return False
-
-    def test_hover_tooltip_is_hidden_again(self):
-        self.registry["registry:a"] = sm.StartupItem(
-            name="a", path=r"C:\very\long\path\that\is\clipped\a.exe", source="registry")
+    def test_hovering_a_row_does_not_create_a_floating_window(self):
+        self.registry["registry:a"] = sm.StartupItem(name="a", path=r"C:\a.exe", source="registry")
         self.app._refresh_startup_list(force=True)
         self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        row = self.app._table_rows[0]
-
-        self.app._show_cell_tip(row)
-        self.app.update_idletasks()
-        self.assertTrue(self._tooltip_alive(), "hovering a row should show the tooltip")
-
-        self.app._hide_cell_tip()
-        self.app.update_idletasks()
-        self.assertFalse(self._tooltip_alive(), "the tooltip must be destroyed on hide")
-
-    def test_tooltip_is_cleared_before_a_dialog_opens(self):
-        self.registry["registry:a"] = sm.StartupItem(name="a", path=r"C:\a.exe",
-                                                     source="registry")
-        self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        self.app._show_cell_tip(self.app._table_rows[0])
-        self.app.update_idletasks()
-        self.assertTrue(self._tooltip_alive())
-
-        with mock.patch.object(self.app, "wait_window", return_value=None):
-            self.app._modal("test", width=200, height=120)
-        self.app.update_idletasks()
-        self.assertFalse(self._tooltip_alive(),
-                         "a leftover tooltip would float over the dialog")
-
-    def test_tooltip_is_cleared_when_the_list_re_renders(self):
-        self.registry["registry:a"] = sm.StartupItem(name="a", path=r"C:\a.exe",
-                                                     source="registry")
-        self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        self.app._show_cell_tip(self.app._table_rows[0])
-        self.app.update_idletasks()
-        self.assertTrue(self._tooltip_alive())
-
-        self.app._render_startup_items(self.app._sorted_startup_items())
-        self.app.update_idletasks()
-        self.assertFalse(self._tooltip_alive(),
-                         "re-rendering must not leave a tooltip behind")
-
-    def test_tooltip_auto_hides(self):
-        self.registry["registry:a"] = sm.StartupItem(name="a", path=r"C:\a.exe",
-                                                     source="registry")
-        self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        self.app._show_cell_tip(self.app._table_rows[0])
-        self.app.update_idletasks()
-        self.assertTrue(self._tooltip_alive())
-        self.assertTrue(
-            self._wait_for(lambda: not self._tooltip_alive(),
-                           main_module.TIP_TIMEOUT_MS / 1000.0 + 2.0),
-            "the tooltip must disappear on its own")
+        self.app._table_rows[0].event_generate("<Enter>")
+        self._pump(0.2)
+        self.assertFalse(any(isinstance(w, customtkinter.CTkToplevel)
+                             for w in self.app.winfo_children()))
 
     # --- P2.8: no Tk errors after close -----------------------------------
 

@@ -1,14 +1,17 @@
 {
-  "style": "Magic Dark",
+  "style": "Rem",
   "language": "zh",
   "monitor_enabled": true,
   "check_interval": 60,
-  "target_guid": "",
+  "target_guid": "c3090681-fe1a-4140-8f48-bf1a0fbfa500",
   "minimize_to_tray": true,
+  "start_to_tray": true,
   "col_widths": [
     0.25,
     0.42,
     0.15,
     0.18
-  ]
+  ],
+  "setup_completed": true,
+  "unsupported_targets": []
 }

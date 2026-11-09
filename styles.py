@@ -1,7 +1,7 @@
 """Style definitions — Magic UI inspired desktop design system."""
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 
 @dataclass
@@ -48,6 +48,10 @@ class DesignStyle:
 
     # Misc
     sidebar_width: int = 200
+
+    # Optional character art (Rem theme). None = plain UI, no artwork.
+    char_palette: Optional[Dict[str, str]] = None
+    char_ring: str = ""
 
 
 STYLES: Dict[str, DesignStyle] = {
@@ -173,6 +177,42 @@ STYLES: Dict[str, DesignStyle] = {
         font_size_body=14,
         font_size_caption=12,
     ),
+    # ── Rem・Water Blue ─────────────────────────────────────────────────
+    # Original Re:ZERO character art on a blue-black night-water canvas.
+    "Rem": DesignStyle(
+        name="Rem",
+        description="Rem-inspired blue night glass: water-blue rim light, starlight specks",
+        canvas="#050b16",
+        surface="#0a1526",
+        card="#0f1f36",
+        card_elevated="#162b49",
+        text_primary="#eaf6ff",
+        text_secondary="#a8c6e4",
+        text_muted="#5f7fa3",
+        accent="#5ec8f8",
+        accent_hover="#8fe0ff",
+        accent_text="#04121f",
+        border="#1b3554",
+        border_strong="#3b6a96",
+        success="#5ef0c6",
+        warning="#ffd166",
+        error="#ff8fa8",
+        info="#8fe0ff",
+        button_radius=10,
+        card_radius=12,
+        input_radius=8,
+        font_size_title=16,
+        font_size_body=14,
+        font_size_caption=12,
+        char_palette={
+            "hair": "#66b4e4", "hair_d": "#3c86c0", "hair_l": "#c4e9ff",
+            "skin": "#ffe8dc", "skin_s": "#f2c4b6",
+            "eye": "#4a9be6", "eye_d": "#173f7a",
+            "cloth": "#1c2745", "cloth_l": "#2f3e69",
+            "line": "#2d2540", "ribbon": "#f2f7ff", "blush": "#ffb0bb",
+        },
+        char_ring="#7fd6ff",
+    ),
 }
 
 _LEGACY_THEME_PREFIX = "daisy" + "UI"
@@ -190,4 +230,4 @@ STYLE_ALIASES = {
     "Spotify": "Magic Ocean",
 }
 
-DEFAULT_STYLE = "Magic Dark"
+DEFAULT_STYLE = "Rem"

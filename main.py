@@ -6,6 +6,7 @@ Dark-mode desktop app with 5 switchable design styles, EN/ZH i18n.
 from __future__ import annotations
 
 import ctypes
+import io
 import json
 import logging
 import logging.handlers
@@ -20,11 +21,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw
-from tkinter import Canvas, Menu, filedialog, font as tkfont
+from PIL import Image, ImageDraw, ImageTk
+from tkinter import Canvas, Label as TkLabel, Menu, filedialog, font as tkfont
 
 from pypinyin import lazy_pinyin, Style
-from styles import STYLES, DEFAULT_STYLE, STYLE_ALIASES, DesignStyle
+from styles import STYLES, STYLE_ALIASES, DEFAULT_STYLE, DesignStyle
+import rem_theme
 from power_manager import (
     PowerMonitor,
     create_missing_builtin_schemes,
@@ -51,7 +53,7 @@ from startup_manager import (
     remove_registry_startup,
     restore_last_backup,
 )
-from i18n import I18n, SUPPORTED_LANGS, LANG_LABELS, DEFAULT_LANG
+from i18n import I18n, DEFAULT_LANG
 
 log = logging.getLogger("pc_auto_scripts")
 
@@ -243,15 +245,18 @@ def _coerce_col_widths(value) -> List[float]:
     return widths
 
 
+def _should_start_to_tray(cfg: dict, args) -> bool:
+    return "--startup" in args and bool(cfg.get("start_to_tray", True))
+
+
 def _normalize_config(raw) -> dict:
     """Validate an arbitrary JSON object into a complete, usable config."""
     cfg = dict(CONFIG_DEFAULTS)
     if not isinstance(raw, dict):
         return cfg
 
-    style = STYLE_ALIASES.get(raw.get("style"), raw.get("style"))
-    cfg["style"] = style if style in STYLES else DEFAULT_STYLE
-    cfg["language"] = _coerce_choice(raw.get("language"), SUPPORTED_LANGS, DEFAULT_LANG)
+    cfg["style"] = DEFAULT_STYLE
+    cfg["language"] = DEFAULT_LANG
     cfg["monitor_enabled"] = _coerce_bool(raw.get("monitor_enabled"), CONFIG_DEFAULTS["monitor_enabled"])
     cfg["check_interval"] = _coerce_interval(raw.get("check_interval"), CONFIG_DEFAULTS["check_interval"])
     cfg["target_guid"] = _coerce_guid(raw.get("target_guid"))
@@ -333,7 +338,6 @@ def save_config(cfg: dict) -> tuple:
             pass
         log.warning("config save failed: %s", exc)
         return False, f"无法保存配置到 {CONFIG_FILE}：{exc}"
-
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +473,6 @@ def _stop_ipc_server() -> None:
         pass
 
 
-
 # ---------------------------------------------------------------------------
 # Tray icon
 # ---------------------------------------------------------------------------
@@ -486,10 +489,48 @@ def _create_icon_image(size: int = 64, color: str = "#5e6ad2") -> Image.Image:
     return img
 
 
-def _create_tray_icon(color_hex: str = "#5e6ad2"):
-    img = _create_icon_image(64, color_hex)
-    img.save(str(ICON_FILE), format="ICO", sizes=[(64, 64)])
-    return Image.open(str(ICON_FILE))
+TRAY_ICON_SIZES = [(16, 16), (32, 32), (48, 48), (256, 256)]
+
+
+_UI_FONT = ""
+
+
+def _ui_font_family() -> str:
+    """Pick one installed family that covers both CJK and Latin.
+
+    Windows ships Microsoft YaHei UI with Segoe UI metrics; Segoe UI alone has
+    no CJK glyphs, which is why every Chinese label fell back to a second font.
+    """
+    global _UI_FONT
+    if _UI_FONT:
+        return _UI_FONT
+    try:
+        available = {name.lower(): name for name in tkfont.families()}
+    except Exception:
+        available = {}
+    for candidate in ("Microsoft YaHei UI", "Microsoft YaHei", "微软雅黑",
+                      "Noto Sans CJK SC", "Source Han Sans SC"):
+        hit = available.get(candidate.lower())
+        if hit:
+            _UI_FONT = hit
+            return hit
+    _UI_FONT = "TkDefaultFont"
+    return _UI_FONT
+
+
+def _create_tray_icon(color_hex: str = "#5e6ad2", art: Image.Image | None = None):
+    """Multi-resolution tray icon, built in memory.
+
+    pystray serialises icon.icon to a temp file on every change, so the source
+    must stay a PIL image; sharing app_icon.ico made a stale read invisible.
+    """
+    img = art.resize((256, 256), Image.LANCZOS) if art else _create_icon_image(256, color_hex)
+    buf = io.BytesIO()
+    img.save(buf, format="ICO", sizes=TRAY_ICON_SIZES)
+    buf.seek(0)
+    out = Image.open(buf)
+    out.load()
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -501,11 +542,9 @@ COL_KEYS = ["name", "path", "source", "action"]
 COL_DEFAULTS = [0.24, 0.43, 0.12, 0.18]
 COL_MIN = 0.04
 HANDLE_WIDTH = 4
-ROW_HEIGHT = 24
-AUTO_TARGET_LABEL = "Auto"
+ROW_HEIGHT = 32
+AUTO_TARGET_LABEL = "自动选择"
 SELF_STARTUP_NAME = "PC_System_Auto_Scripts"
-# A hover tooltip must never outlive the interaction that revealed it.
-TIP_TIMEOUT_MS = 4000
 
 
 # ======================================================================
@@ -513,7 +552,7 @@ TIP_TIMEOUT_MS = 4000
 # ======================================================================
 
 def apply_btn_style(btn: ctk.CTkButton, s: DesignStyle):
-    """Style a CTkButton as a Magic UI-inspired primary button."""
+    """Style a primary button."""
     btn.configure(fg_color=s.accent, hover_color=s.accent_hover,
                   text_color=s.accent_text,
                   border_color=s.accent_hover,
@@ -675,11 +714,10 @@ class App(ctk.CTk):
         super().__init__()
 
         self.cfg = load_config()
-        self.cfg["style"] = STYLE_ALIASES.get(self.cfg.get("style"), self.cfg.get("style"))
-        if self.cfg.get("style") not in STYLES:
-            self.cfg["style"] = DEFAULT_STYLE
-        self._style: DesignStyle = STYLES[self.cfg["style"]]
-        self._i18n = I18n(self.cfg.get("language", DEFAULT_LANG))
+        self.cfg["style"] = DEFAULT_STYLE
+        self.cfg["language"] = DEFAULT_LANG
+        self._style: DesignStyle = STYLES[DEFAULT_STYLE]
+        self._i18n = I18n()
         self._sidebar_expanded = True
         self._monitor_running = False
         self._window_visible = True
@@ -705,7 +743,7 @@ class App(ctk.CTk):
         self._compact_mode = False
         self._compact_frame: Optional[ctk.CTkFrame] = None
         self._full_geometry = "880x580"
-        self._compact_geometry = "260x168"
+        self._compact_geometry = "260x72"
 
         # Column widths (fractions, sum ~1.0)
         self._col_widths = list(self.cfg.get("col_widths", COL_DEFAULTS))
@@ -759,14 +797,44 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("dark")
         self.configure(fg_color=self._style.canvas)
 
-        self._build_sidebar()
-        self._build_main_content()
+        self._theme_images: Dict[str, ImageTk.PhotoImage] = {}
+        # Everything visible lives in one container filling the window, so the
+        # character artwork can sit at the bottom of that stack: CTk widgets
+        # placed directly on the root do not honour lower()/lift() reliably.
+        self._root_frame = ctk.CTkFrame(self, fg_color=self._style.canvas, corner_radius=0)
+        self._root_frame.pack(fill="both", expand=True)
 
-        # add="+" — the main-content builder already bound <Configure> for the
-        # sidebar/content alignment; a plain bind() would silently replace it and
-        # the content would keep its build-time width after any resize.
+        # Building the sidebar and the content costs seconds on a slow Tk
+        # round-trip machine, and doing it inline means the window is invisible
+        # for that whole span. Split it into slices so the window can map first:
+        # each slice paints, then the next one runs.
         self.bind("<Configure>", self._on_window_configure, add="+")
+        self._build_slices = [
+            self._build_sidebar,
+            self._build_main_content,
+            self._finish_startup,
+        ]
+        self.after_idle(self._run_build_slices)
 
+    def _run_build_slices(self) -> None:
+        """Build the UI one slice per idle turn so the window shows up early."""
+        if self._closing:
+            return
+        try:
+            step = self._build_slices.pop(0)
+        except IndexError:
+            return
+        try:
+            step()
+        except Exception:
+            log.exception("UI build slice failed")
+        if self._build_slices:
+            # update_idletasks lets Tk paint what exists so far; without it the
+            # slices would all queue up and the window would stay blank.
+            self.after_idle(self._run_build_slices)
+
+    def _finish_startup(self) -> None:
+        """Post-build wiring that must run after sidebar and content exist."""
         # The initial <Configure> can be missed while the window is being mapped,
         # so align the content explicitly once the real size is known.
         self.after_idle(self._relayout_main_frame)
@@ -783,13 +851,20 @@ class App(ctk.CTk):
             # First run always shows the window so the user sees the current plan,
             # the target policy and the monitor switch before anything is chosen.
             self.after(700, self._show_first_run_setup)
-        elif self.cfg.get("start_to_tray", True):
+        elif _should_start_to_tray(self.cfg, sys.argv[1:]):
             if self._setup_tray():
                 self._window_visible = False
                 self.after(500, self.withdraw)
 
         if not first_run and CONFIG_FILE_ERROR:
             self.after(900, lambda: self._show_check_result(CONFIG_FILE_ERROR, "warning"))
+        # CTk re-raises widgets on idle configuration, so re-assert the layer order
+        # once the window has settled instead of trusting construction order.
+        self.after(250, self._keep_art_below_content)
+        self.after(250, self._place_background_layer)
+        # Nothing in __init__ other than the slices touches the widget tree, so
+        # the window can be mapped right now; Tk paints whatever slice has run.
+        self.update_idletasks()
 
     # ==================================================================
     # Reporting helpers
@@ -871,41 +946,177 @@ class App(ctk.CTk):
         label.after(300, lambda: label.configure(font=font, text_color=color))
 
     # ==================================================================
-    # Style switching
+    # Rem character artwork
     # ==================================================================
 
-    def _switch_style(self, name: str):
-        name = STYLE_ALIASES.get(name, name)
-        if name not in STYLES:
+    def _art_active(self) -> bool:
+        return bool(getattr(self._style, "char_palette", None))
+
+    def _theme_palette(self) -> Dict[str, str]:
+        return rem_theme.palette_from_theme(self._style)
+
+    def _style_image(self, key: str, maker) -> Optional[ImageTk.PhotoImage]:
+        """Cached PhotoImage; kept on self because Tk drops unreferenced images."""
+        if not self._art_active():
+            return None
+        if key not in self._theme_images:
+            self._theme_images[key] = ImageTk.PhotoImage(maker())
+        return self._theme_images[key]
+
+    def _apply_background_layer(self):
+        """Rem at ~half strength behind the content column, tinted to the canvas."""
+        if not self._art_active():
+            if hasattr(self, "_bg_label"):
+                self._bg_label.lower()
+                self._bg_label.configure(image=None)
             return
-        self._style = STYLES[name]
-        self.cfg["style"] = name
-        self._persist_config()
+        if not hasattr(self, "_bg_label"):
+            # A plain tk.Label (CTkLabel sizes to its image and drifts off-centre under
+            # relwidth placing), and a child of the *toplevel* rather than of
+            # _root_frame: a CTkFrame paints its own canvas over its whole area, so
+            # anything beneath _main_frame_ref could stay hidden whenever Tk only
+            # repainted part of the window. As a sibling of _root_frame that it is
+            # lowered under, the label stays behind everything and eats no clicks.
+            self._bg_label = TkLabel(self, bd=0, highlightthickness=0)
+            self._bg_root_size = None
+            self.bind("<Configure>", self._on_bg_configure, add="+")
+        self._bg_label.configure(bg=self._style.canvas)
+        self._place_background_layer()
+        self._keep_art_below_content()
+        self._paint_background()
 
-        # Update root window
-        self.configure(fg_color=self._style.canvas)
+    def _on_bg_configure(self, event=None):
+        """Debounce background repaints: a drag fires hundreds of <Configure>s."""
+        if event is not None and event.widget is not self:
+            return
+        pending = getattr(self, "_bg_paint_job", None)
+        if pending:
+            self.after_cancel(pending)
+        self._bg_paint_job = self.after(120, self._paint_background)
 
-        # Re-apply style to all registered widgets
-        for widget, styler in self._stylables:
-            try:
-                if widget.winfo_exists():
-                    styler(widget, self._style)
-            except Exception:
-                pass
+    # Width of the right-hand strip kept clear for the character art.
+    ART_RAIL = 200
 
-        self.update_idletasks()
-        self._update_tray_icon_color()
-        # Defer rebuild to avoid conflicts with dropdown menu closing
-        if hasattr(self, '_deferred_refresh_id'):
-            self.after_cancel(self._deferred_refresh_id)
-        self._deferred_refresh_id = self.after(100, self._deferred_refresh_startup)
+    def _art_rail_pad(self) -> int:
+        """Right padding that keeps cards off the art rail (0 when art is off)."""
+        return self.ART_RAIL if self._art_active() and not self._compact_mode else 0
 
-    def _deferred_refresh_startup(self):
-        self._refresh_startup_list()
+    def _place_art_rail(self, width: int, height: int) -> None:
+        """Pin the art to the right edge of the content column and repaint it."""
+        art = getattr(self, "_art_rail", None)
+        if art is None or not art.winfo_exists():
+            return
+        if not self._art_active() or self._compact_mode:
+            art.place_forget()
+            return
+        rail = min(self.ART_RAIL, max(0, width - 260))
+        if rail < 80:
+            art.place_forget()
+            return
+        art.place(x=width - rail, y=0, width=rail, height=height)
+        self._paint_content_art(rail, height)
+
+    def _paint_content_art(self, width: int, height: int) -> None:
+        """Paint the character into the content column behind its cards."""
+        art = getattr(self, "_content_art", None)
+        if art is None:
+            return
+        if not self._art_active() or self._compact_mode or width < 120 or height < 120:
+            art.configure(image="")
+            return
+        key = (width // 16 * 16, height // 16 * 16)
+        if key == getattr(self, "_content_art_key", None):
+            return
+        self._content_art_key = key
+        ring = self._style.char_ring or self._style.accent
+        # Drawn at the rail's own aspect ratio, so Rem is composed into the
+        # strip rather than being a wider picture cropped down the middle.
+        image = rem_theme.char_portrait(key[0], key[1],
+                                        self._theme_palette(), self._style.canvas, ring)
+        photo = ImageTk.PhotoImage(image)
+        self._content_art_photo = photo
+        # bg must be set before the image: a bare tk.Label shows a white plate
+        # on the first paint otherwise.
+        art.configure(bg=self._style.canvas, image=photo)
+
+    def _paint_background(self):
+        if not self._art_active():
+            self._bg_label.configure(image=None)
+            return
+        # Paint at the window size; the label is inset by its own border so the
+        # image is simply scaled to fit rather than stretched to odd fractions.
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 120:
+            w, h = int(self.winfo_reqwidth()), int(self.winfo_reqheight())
+        if w < 120 or h < 120:
+            return                                   # not laid out yet; retry on resize
+        # Quantise to 32px steps: a drag-resize then lands on a handful of cached
+        # images instead of repainting for every intermediate pixel size.
+        bucket = (max(32, (w * 3 // 4) // 32 * 32), max(32, (h * 3 // 4) // 32 * 32))
+        if getattr(self, "_bg_root_size", None) == bucket:
+            return                                   # ignore unrelated <Configure>s
+        self._bg_root_size = bucket
+        ring = self._style.char_ring or self._style.accent
+        # Painted at 75% and stretched by Tk: it is atmosphere behind the cards,
+        # and the full-resolution render is what made resizing sluggish.
+        image = rem_theme.backdrop(bucket[0], bucket[1],
+                                   self._theme_palette(), self._style.canvas, ring)
+        photo = ImageTk.PhotoImage(image)
+        self._bg_photo = photo                       # keep a reference alive
+        self._bg_label.configure(image=photo)
+        self._keep_art_below_content()
+
+    def _keep_art_below_content(self):
+        """Keep the art label under the whole UI (a sibling below _root_frame)."""
+        if hasattr(self, "_bg_label") and hasattr(self, "_root_frame") and self._art_active():
+            self._bg_label.lower(self._root_frame)
+
+    def _paint_brand_art(self):
+        if not self._art_active():
+            self._brand_icon.configure(image=None, text="⚡")
+            return
+        # CTkImage wants the PIL image (not a PhotoImage) so it can scale on HighDPI.
+        size = int(36 * ctk.ScalingTracker.get_window_dpi_scaling(self))
+        self._brand_icon.configure(
+            image=ctk.CTkImage(light_image=rem_theme.rem_avatar(
+                int(size), self._theme_palette(), self._style.char_ring), size=(36, 36)),
+            text="")
 
     def _reg(self, widget, styler):
         """Register a widget for automatic restyling on theme switch."""
         self._stylables.append((widget, styler))
+
+    def _switch_style(self, label: str):
+        """Swap the whole design system and repaint every registered widget."""
+        name = STYLE_ALIASES.get(label, label)
+        style = STYLES.get(name)
+        if style is None or style is self._style:
+            return
+        self._style = style
+        self.cfg["style"] = name
+        self._persist_config()
+
+        self._row_font_cache = None            # fonts are built from the style
+        self._theme_images.clear()
+        self._bg_root_size = None
+
+        alive = []
+        for widget, styler in self._stylables:
+            try:
+                if not widget.winfo_exists():
+                    continue
+                styler(widget, style)
+            except Exception:
+                log.debug("restyle failed for %r", widget, exc_info=True)
+                continue
+            alive.append((widget, styler))
+        self._stylables = alive
+
+        self.configure(fg_color=style.canvas)
+        self._root_frame.configure(fg_color=style.canvas)
+        self._paint_brand_art()
+        self._on_bg_configure()
+        self._update_tray_icon_color()
 
     def _mode_button_text(self) -> str:
         return self._i18n.t("compact.toggle") if not self._compact_mode else self._i18n.t("compact.full")
@@ -941,80 +1152,57 @@ class App(ctk.CTk):
     def _build_sidebar(self):
         s = self._style
 
-        self._sidebar = ctk.CTkFrame(self, width=SIDEBAR_EXPANDED, corner_radius=0)
+        # Explicit (not implicit) stacking: the character layer must stay below the
+        # sidebar, though it gets created later. See _apply_background_layer().
+        self._sidebar = ctk.CTkFrame(self._root_frame, width=SIDEBAR_EXPANDED, corner_radius=0)
         apply_surface(self._sidebar, s)
         self._sidebar.pack(side="left", fill="y")
         self._sidebar.pack_propagate(False)
         self._reg(self._sidebar, apply_surface)
 
         # Brand
-        self._brand_frame = ctk.CTkFrame(self._sidebar, fg_color="transparent")
+        self._brand_frame = ctk.CTkFrame(self._sidebar, fg_color="transparent", corner_radius=0)
         self._brand_frame.pack(fill="x", padx=10, pady=(12, 3))
         self._brand_icon = ctk.CTkLabel(self._brand_frame, text="⚡", font=ctk.CTkFont(size=20),
                                         text_color=s.accent, anchor="w")
         self._brand_icon.pack(side="left")
         self._reg(self._brand_icon, lambda w, s: w.configure(text_color=s.accent))
-        self._brand_text = ctk.CTkLabel(self._brand_frame, text="PC Auto",
+        self._paint_brand_art()
+        self._brand_text = ctk.CTkLabel(self._brand_frame, text="系统助手",
                                         font=ctk.CTkFont(size=15, weight="bold"),
                                         text_color=s.text_primary, anchor="w")
         self._brand_text.pack(side="left", padx=(8, 0))
         self._reg(self._brand_text, lambda w, s: w.configure(text_color=s.text_primary))
 
-        # Section labels
-        self._appearance_label = ctk.CTkLabel(
-            self._sidebar, text=self._i18n.t("sidebar.appearance"),
-            font=ctk.CTkFont(size=11), text_color=s.text_muted, anchor="w")
-        self._appearance_label.pack(fill="x", padx=10, pady=(8, 3))
-        self._reg(self._appearance_label, lambda w, s: w.configure(text_color=s.text_muted))
-
-        # Style dropdown
-        self._style_dropdown = ctk.CTkOptionMenu(
-            self._sidebar, values=list(STYLES.keys()), font=ctk.CTkFont(size=13),
-            command=self._switch_style)
-        apply_dropdown(self._style_dropdown, s)
-        _make_dropdown_toggle(self._style_dropdown)
-        self._style_dropdown.set(self.cfg["style"])
-        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=100,
-                         max_width=SIDEBAR_EXPANDED - 20)
-        self._style_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
-        self._reg(self._style_dropdown, apply_dropdown)
-
-        # Language dropdown
-        self._lang_dropdown = ctk.CTkOptionMenu(
-            self._sidebar, values=[LANG_LABELS[l] for l in SUPPORTED_LANGS],
-            font=ctk.CTkFont(size=13), command=self._on_lang_changed)
-        apply_dropdown(self._lang_dropdown, s)
-        _make_dropdown_toggle(self._lang_dropdown)
-        self._lang_dropdown.set(LANG_LABELS.get(self._i18n.lang, "中文"))
-        fit_option_width(self._lang_dropdown, [LANG_LABELS[l] for l in SUPPORTED_LANGS],
-                         min_width=80, max_width=SIDEBAR_EXPANDED - 20)
-        self._lang_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
-        self._reg(self._lang_dropdown, apply_dropdown)
-
-        # Icon buttons for collapsed mode
-        self._style_icon_btn = ctk.CTkButton(
-            self._sidebar, text="🎨", width=44, height=36,
-            font=ctk.CTkFont(size=18), command=self._cycle_style)
-        self._reg(self._style_icon_btn, apply_btn_secondary)
-        apply_btn_secondary(self._style_icon_btn, s)
-
-        self._lang_icon_btn = ctk.CTkButton(
-            self._sidebar, text="🌐", width=44, height=36,
-            font=ctk.CTkFont(size=18), command=self._cycle_language)
-        self._reg(self._lang_icon_btn, apply_btn_secondary)
-        apply_btn_secondary(self._lang_icon_btn, s)
-
         # Separator + settings section
-        self._sep2 = ctk.CTkFrame(self._sidebar, height=1)
+        self._sep2 = ctk.CTkFrame(self._sidebar, height=1, corner_radius=0)
         self._sep2.configure(fg_color=s.border)
-        self._sep2.pack(fill="x", padx=8, pady=(10, 6))
+        self._sep2.pack(fill="x", padx=12, pady=(16, 12))
         self._reg(self._sep2, lambda w, s: w.configure(fg_color=s.border))
 
         self._settings_label = ctk.CTkLabel(
             self._sidebar, text=self._i18n.t("sidebar.settings"),
             font=ctk.CTkFont(size=11), text_color=s.text_muted, anchor="w")
-        self._settings_label.pack(fill="x", padx=10, pady=(0, 3))
+        self._settings_label.pack(fill="x", padx=12, pady=(0, 8))
         self._reg(self._settings_label, lambda w, s: w.configure(text_color=s.text_muted))
+
+        # Appearance — the theme picker belongs here: without it the six
+        # design systems were unreachable from the UI.
+        self._theme_row = ctk.CTkFrame(self._sidebar, fg_color="transparent", corner_radius=0)
+        self._theme_row.pack(fill="x", padx=12, pady=(0, 16))
+        self._theme_label = ctk.CTkLabel(
+            self._theme_row, text="主题", anchor="w",
+            font=ctk.CTkFont(size=12), text_color=s.text_secondary)
+        self._theme_label.pack(fill="x")
+        self._reg(self._theme_label, lambda w, s: w.configure(text_color=s.text_secondary))
+        self._style_dropdown = ctk.CTkOptionMenu(
+            self._theme_row, values=list(STYLES.keys()), height=28,
+            font=ctk.CTkFont(size=12), dropdown_font=ctk.CTkFont(size=12),
+            command=self._switch_style)
+        apply_dropdown(self._style_dropdown, s)
+        self._style_dropdown.pack(fill="x", pady=(6, 0))
+        self._style_dropdown.set(self._style.name)
+        self._reg(self._style_dropdown, apply_dropdown)
 
         # Close behavior toggle
         self._tray_toggle_switch = ctk.CTkSwitch(
@@ -1022,7 +1210,7 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=12), text_color=s.text_secondary,
             command=self._toggle_tray_behavior)
         apply_switch(self._tray_toggle_switch, s)
-        self._tray_toggle_switch.pack(padx=10, pady=(2, 3), anchor="w")
+        self._tray_toggle_switch.pack(padx=12, pady=(0, 8), anchor="w")
         if self.cfg.get("minimize_to_tray", True):
             self._tray_toggle_switch.select()
         self._reg(self._tray_toggle_switch, apply_switch)
@@ -1035,13 +1223,17 @@ class App(ctk.CTk):
 
         # Toggle button — placed on the right edge of the sidebar,
         # owned by the root window so it floats at the boundary.
+        # A slim handle pinned to the sidebar's right edge near the top. It used
+        # to be 22x64 at mid-height, which covered the theme dropdown's text.
+        # Sits in the content area just past the sidebar edge, straddling it so
+        # it reads as a handle without eating into the sidebar's 12px gutter.
         self._toggle_btn = ctk.CTkButton(
-            self, text="◀", width=22, height=64,
-            font=ctk.CTkFont(size=13), command=self._toggle_sidebar,
-            corner_radius=6)
+            self._root_frame, text="◀", width=14, height=48,
+            font=ctk.CTkFont(size=11), command=self._toggle_sidebar,
+            corner_radius=4)
         apply_btn_secondary(self._toggle_btn, s)
         self._reg(self._toggle_btn, apply_btn_secondary)
-        self._toggle_btn.place(x=SIDEBAR_EXPANDED - 2, rely=0.5, anchor="w")
+        self._toggle_btn.place(x=SIDEBAR_EXPANDED + 4, y=12, anchor="nw")
 
     def _toggle_tray_behavior(self):
         self.cfg["minimize_to_tray"] = bool(self._tray_toggle_switch.get())
@@ -1055,67 +1247,29 @@ class App(ctk.CTk):
             # Collapse: shrink sidebar, shrink window, main content stays same size
             self._sidebar.configure(width=SIDEBAR_COLLAPSED)
             self._toggle_btn.configure(text="▶")
-            for w in [self._brand_frame, self._appearance_label,
-                       self._sep2, self._settings_label,
+            for w in [self._brand_frame,
+                       self._sep2, self._settings_label, self._theme_row,
                        self._tray_toggle_switch, self._sidebar_version]:
                 if w: w.pack_forget()
-            self._style_dropdown.pack_forget()
-            self._lang_dropdown.pack_forget()
-            self._style_icon_btn.pack(pady=(8, 2), padx=6)
-            self._lang_icon_btn.pack(pady=(2, 8), padx=6)
             new_win_w = max(400, cur_w - delta)
-            self._toggle_btn.place(x=SIDEBAR_COLLAPSED - 2, rely=0.5, anchor="w")
+            self._toggle_btn.place(x=SIDEBAR_COLLAPSED + 4, y=12, anchor="nw")
         else:
             # Expand: grow sidebar, grow window, main content stays same size
             self._sidebar.configure(width=SIDEBAR_EXPANDED)
             self._toggle_btn.configure(text="◀")
-            self._style_icon_btn.pack_forget()
-            self._lang_icon_btn.pack_forget()
             self._brand_frame.pack(fill="x", padx=10, pady=(12, 3))
-            self._appearance_label.pack(fill="x", padx=10, pady=(8, 3))
-            self._style_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
-            self._lang_dropdown.pack(anchor="w", padx=8, pady=(2, 4))
-            self._sep2.pack(fill="x", padx=8, pady=(10, 6))
-            self._settings_label.pack(fill="x", padx=10, pady=(0, 3))
-            self._tray_toggle_switch.pack(padx=10, pady=(2, 3), anchor="w")
+            self._sep2.pack(fill="x", padx=12, pady=(16, 12))
+            self._settings_label.pack(fill="x", padx=12, pady=(0, 8))
+            self._theme_row.pack(fill="x", padx=12, pady=(0, 16))
+            self._tray_toggle_switch.pack(padx=12, pady=(0, 8), anchor="w")
             self._sidebar_version.pack(side="bottom", pady=(0, 6))
             new_win_w = cur_w + delta
-            self._toggle_btn.place(x=SIDEBAR_EXPANDED - 2, rely=0.5, anchor="w")
+            self._toggle_btn.place(x=SIDEBAR_EXPANDED + 4, y=12, anchor="nw")
 
         self._sidebar_expanded = not self._sidebar_expanded
         self.geometry(f"{new_win_w}x{cur_h}")
         self._snap_main_to_sidebar()
 
-    def _cycle_style(self):
-        """Cycle to the next design style (icon button in collapsed sidebar)."""
-        names = list(STYLES.keys())
-        cur = self._style_dropdown.get()
-        idx = names.index(cur) if cur in names else 0
-        next_name = names[(idx + 1) % len(names)]
-        self._style_dropdown.set(next_name)
-        self._switch_style(next_name)
-
-    def _cycle_language(self):
-        """Toggle language (icon button in collapsed sidebar)."""
-        cur = self._lang_dropdown.get()
-        labels = [LANG_LABELS[l] for l in SUPPORTED_LANGS]
-        idx = labels.index(cur) if cur in labels else 0
-        next_label = labels[(idx + 1) % len(labels)]
-        self._lang_dropdown.set(next_label)
-        self._on_lang_changed(next_label)
-
-    def _on_lang_changed(self, label: str):
-        lang_code = None
-        for code, lbl in LANG_LABELS.items():
-            if lbl == label:
-                lang_code = code
-                break
-        if lang_code is None:
-            return
-        self._i18n.lang = lang_code
-        self.cfg["language"] = lang_code
-        self._persist_config()
-        self._refresh_all_text()
 
     # ==================================================================
     # Main content
@@ -1123,7 +1277,7 @@ class App(ctk.CTk):
 
     def _build_main_content(self):
         s = self._style
-        main = ctk.CTkFrame(self, fg_color="transparent")
+        main = ctk.CTkFrame(self._root_frame, fg_color="transparent", corner_radius=0)
         self._main_frame_ref = main
         # Fractional placement only; no pixel width, which would be ambiguous
         # under Windows DPI scaling. _relayout_main_frame() sets the fractions.
@@ -1132,8 +1286,8 @@ class App(ctk.CTk):
         self.bind("<Configure>", self._on_root_configure, add="+")
 
         # Header — minimal, single row
-        header = ctk.CTkFrame(main, fg_color="transparent", height=26)
-        header.pack(fill="x", padx=10, pady=(4, 0))
+        header = ctk.CTkFrame(main, fg_color="transparent", height=26, corner_radius=0)
+        header.pack(fill="x", padx=(10, self._art_rail_pad()), pady=(4, 0))
         header.pack_propagate(False)
 
         self._header_title_label = ctk.CTkLabel(
@@ -1159,6 +1313,13 @@ class App(ctk.CTk):
         self._compact_toggle_btn.pack(side="right")
         self._reg(self._compact_toggle_btn, apply_btn_secondary)
         fit_button_width(self._compact_toggle_btn, min_width=74, max_width=110, padding=24)
+
+        # Character art gets its own rail pinned to the right edge of the content
+        # column. Everything else packs into the remaining width, so the art is
+        # never covered by an opaque card — which is what made it invisible when
+        # it sat under a full-width stack.
+        self._art_rail = TkLabel(main, bd=0, highlightthickness=0)
+        self._content_art = self._art_rail
 
         self._main_frame = main
         self._build_power_card()
@@ -1187,6 +1348,16 @@ class App(ctk.CTk):
     def _snap_main_to_sidebar(self):
         """Position main content flush to the sidebar edge."""
         self._relayout_main_frame()
+        self._place_background_layer()
+
+    def _place_background_layer(self):
+        """Fill the whole window behind the content; the art fades in from the right."""
+        if not hasattr(self, "_bg_label") or not self._art_active():
+            return
+        if self._compact_mode:
+            self._bg_label.place_forget()
+            return
+        self._bg_label.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
     def _window_size(self) -> tuple:
         """Reported window size — the same space used by place() and winfo_*.
@@ -1222,10 +1393,17 @@ class App(ctk.CTk):
         relx = min(max(sidebar / width, 0.02), 0.8)
         self._main_frame_ref.place_configure(relx=relx, y=0, relheight=1.0,
                                              relwidth=1.0 - relx)
+        self.update_idletasks()
+        self._place_art_rail(self._main_frame_ref.winfo_width(),
+                             self._main_frame_ref.winfo_height())
+        self._place_background_layer()
 
     def _on_window_configure(self, event):
         if event.widget != self:
             return
+        # CustomTkinter re-raises a placed frame on its own <Configure>; put the
+        # character layer back underneath whenever the content frame was reshuffled.
+        self._keep_art_below_content()
         if hasattr(self, '_header_frame') and self._header_frame.winfo_exists():
             w = self._header_frame.winfo_width()
             if w > 10:
@@ -1241,11 +1419,11 @@ class App(ctk.CTk):
         s = self._style
         card = ctk.CTkFrame(self._main_frame)
         apply_card(card, s)
-        card.pack(fill="x", padx=8, pady=(2, 1))
+        card.pack(fill="x", padx=(8, self._art_rail_pad()), pady=(2, 1))
         self._reg(card, apply_card)
 
         # Row 1: title + status badge + active plan name
-        r1 = ctk.CTkFrame(card, fg_color="transparent", height=28)
+        r1 = ctk.CTkFrame(card, fg_color="transparent", height=28, corner_radius=0)
         r1.pack(fill="x", padx=8, pady=(4, 1))
         r1.pack_propagate(False)
 
@@ -1271,10 +1449,14 @@ class App(ctk.CTk):
 
         # The latest check result shares this row instead of owning one: a whole
         # row that is usually empty made the card feel bulky and hollow.
+        # width is pinned and the text truncated: this label carries a whole
+        # sentence, and letting it size naturally pushes the right-hand buttons
+        # out of the card (where they land on top of the character art).
         self._check_result_label = ctk.CTkLabel(
             r1, text="", font=ctk.CTkFont(size=10), text_color=s.text_secondary,
-            anchor="w", justify="left")
-        self._check_result_label.pack(side="left", padx=(10, 6))
+            anchor="w", justify="left", width=128)
+        self._check_result_label.pack(side="left", padx=(8, 4))
+        self._check_result_label.pack_propagate(False)
         self._reg(self._check_result_label, lambda w, s: w.configure(text_color=s.text_secondary))
 
         # Row 1 (right side): the two system-modifying actions live here, because
@@ -1298,9 +1480,14 @@ class App(ctk.CTk):
 
         # Row 2: target + interval controls, kept adjacent so the row has no hole
         # in the middle at wide window sizes.
-        r2 = ctk.CTkFrame(card, fg_color="transparent", height=28)
+        r2 = ctk.CTkFrame(card, fg_color="transparent", height=28, corner_radius=0)
         r2.pack(fill="x", padx=8, pady=(2, 4))
         r2.pack_propagate(False)
+        # Children packed side="left" do not shrink when the card narrows; they
+        # spill past the frame edge and end up painted over the art rail.
+        # Clipping keeps them inside the card instead.
+        r2.pack_propagate(False)
+        r2.grid_propagate(False)
 
         self._power_target_label = ctk.CTkLabel(
             r2, text=self._i18n.t("power.target_plan") + ":",
@@ -1309,7 +1496,7 @@ class App(ctk.CTk):
         self._reg(self._power_target_label, lambda w, s: w.configure(text_color=s.text_secondary))
 
         self._target_dropdown = ctk.CTkOptionMenu(
-            r2, values=["Auto"], font=ctk.CTkFont(size=11),
+            r2, values=[AUTO_TARGET_LABEL], font=ctk.CTkFont(size=11),
             height=24, width=110, dynamic_resizing=False, command=self._on_target_changed)
         apply_dropdown(self._target_dropdown, s)
         self._target_dropdown.pack(side="left", padx=(0, 12))
@@ -1445,11 +1632,11 @@ class App(ctk.CTk):
         s = self._style
         card = ctk.CTkFrame(self._main_frame)
         apply_card(card, s)
-        card.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        card.pack(fill="both", expand=True, padx=(10, self._art_rail_pad()), pady=(0, 6))
         self._reg(card, apply_card)
 
         # Title
-        title_row = ctk.CTkFrame(card, fg_color="transparent")
+        title_row = ctk.CTkFrame(card, fg_color="transparent", corner_radius=0)
         title_row.pack(fill="x", padx=8, pady=(6, 3))
         self._startup_title_label = ctk.CTkLabel(
             title_row, text=self._i18n.t("startup.title"),
@@ -1490,7 +1677,7 @@ class App(ctk.CTk):
         self._reg(self._source_filter_dropdown, apply_dropdown)
 
         # --- Add row ---
-        add_row = ctk.CTkFrame(card)
+        add_row = ctk.CTkFrame(card, corner_radius=0)
         apply_surface_corner(add_row, s)
         add_row.pack(fill="x", padx=8, pady=(0, 6))
         self._reg(add_row, apply_surface_corner)
@@ -1544,7 +1731,7 @@ class App(ctk.CTk):
         self._update_self_buttons()
 
         # --- Column header ---
-        self._header_frame = ctk.CTkFrame(card, height=24)
+        self._header_frame = ctk.CTkFrame(card, height=24, corner_radius=0)
         apply_surface_corner(self._header_frame, s)
         self._header_frame.pack(fill="x", padx=8, pady=(0, 2))
         self._header_frame.pack_propagate(False)
@@ -1585,20 +1772,13 @@ class App(ctk.CTk):
 
         # --- Scrollable list ---
         self._startup_list_frame = ctk.CTkScrollableFrame(
-            card, fg_color="transparent",
+            card, fg_color="transparent", corner_radius=0,
             scrollbar_fg_color=s.surface,
             scrollbar_button_color=s.border_strong,
             scrollbar_button_hover_color=s.accent)
         self._startup_list_frame.pack(fill="both", expand=True, padx=8, pady=(0, 4))
         self._startup_list_frame._parent_canvas.configure(yscrollincrement=3,
                                                           xscrollincrement=3)
-        # Any scroll, click or mode change must clear a lingering tooltip.
-        self._startup_list_frame._parent_canvas.bind(
-            "<MouseWheel>", lambda e: self._hide_cell_tip(), add="+")
-        self._startup_list_frame._parent_canvas.bind(
-            "<Button-1>", lambda e: self._hide_cell_tip(), add="+")
-        self._startup_list_frame._parent_canvas.bind(
-            "<B1-Motion>", lambda e: self._hide_cell_tip(), add="+")
         self._reg(self._startup_list_frame,
                        lambda w, s: w.configure(
                            scrollbar_fg_color=s.surface,
@@ -1612,7 +1792,7 @@ class App(ctk.CTk):
     def _build_compact_view(self):
         """Build a tiny titlebar-free compact controller."""
         s = self._style
-        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame = ctk.CTkFrame(self._root_frame, fg_color="transparent", corner_radius=0)
         self._compact_frame = frame
 
         card = ctk.CTkFrame(frame)
@@ -1620,7 +1800,7 @@ class App(ctk.CTk):
         card.pack(fill="both", expand=True, padx=4, pady=4)
         self._reg(card, apply_card)
 
-        status_row = ctk.CTkFrame(card, fg_color="transparent", height=22)
+        status_row = ctk.CTkFrame(card, fg_color="transparent", height=22, corner_radius=0)
         status_row.pack(fill="x", padx=6, pady=(5, 2))
         status_row.pack_propagate(False)
 
@@ -1637,7 +1817,7 @@ class App(ctk.CTk):
         self._compact_full_btn.pack(side="right")
         self._reg(self._compact_full_btn, apply_btn_secondary)
 
-        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions = ctk.CTkFrame(card, fg_color="transparent", corner_radius=0)
         actions.pack(fill="x", padx=6, pady=(2, 4))
 
         self._compact_plan_btn = ctk.CTkButton(
@@ -1647,23 +1827,7 @@ class App(ctk.CTk):
         self._compact_plan_btn.pack(fill="x", pady=(0, 4))
         self._reg(self._compact_plan_btn, apply_btn_style)
 
-        self._compact_lang_btn = ctk.CTkButton(
-            actions, text=self._i18n.t("compact.switch_language"), height=24,
-            font=ctk.CTkFont(size=10), command=self._cycle_language)
-        apply_btn_secondary(self._compact_lang_btn, s)
-        self._compact_lang_btn.pack(fill="x", pady=(0, 4))
-        self._reg(self._compact_lang_btn, apply_btn_secondary)
-
-        self._compact_style_btn = ctk.CTkButton(
-            actions, text=self._i18n.t("compact.switch_style"), height=24,
-            font=ctk.CTkFont(size=10), command=self._cycle_style)
-        apply_btn_secondary(self._compact_style_btn, s)
-        self._compact_style_btn.pack(fill="x")
-        self._reg(self._compact_style_btn, apply_btn_secondary)
-
         fit_button_width(self._compact_plan_btn, min_width=88, max_width=132, padding=14)
-        fit_button_width(self._compact_lang_btn, min_width=88, max_width=132, padding=14)
-        fit_button_width(self._compact_style_btn, min_width=88, max_width=132, padding=14)
         fit_button_width(self._compact_full_btn, min_width=58, max_width=88, padding=10)
 
         def _bind_drag(widget):
@@ -1730,7 +1894,6 @@ class App(ctk.CTk):
 
     def _set_compact_mode(self, compact: bool):
         """Apply compact/full mode without rebuilding widgets."""
-        self._hide_cell_tip()
         if self._compact_mode == compact:
             self._update_mode_switch_texts()
             return
@@ -1740,14 +1903,16 @@ class App(ctk.CTk):
 
         if compact:
             x, y = self.winfo_x(), self.winfo_y()
-            self._compact_geometry = f"260x168+{max(0, x)}+{max(0, y)}"
+            self._compact_geometry = f"260x72+{max(0, x)}+{max(0, y)}"
             self._sidebar.pack_forget()
             self._main_frame_ref.place_forget()
+            if hasattr(self, "_bg_label"):
+                self._bg_label.place_forget()   # art belongs to the full window only
             self._compact_frame.pack(fill="both", expand=True)
             self._compact_frame.lift()
             self.overrideredirect(True)
             self.resizable(False, False)
-            self.minsize(260, 168)
+            self.minsize(260, 72)
             self.geometry(self._compact_geometry)
         else:
             self.overrideredirect(False)
@@ -1759,6 +1924,7 @@ class App(ctk.CTk):
 
         self._update_mode_switch_texts()
         self._apply_geometry_for_mode()
+        self._place_background_layer()
         if not compact:
             # Realign with fractional placement only. An absolute pixel x here
             # would stick in the place options and override the fraction, pushing
@@ -1770,63 +1936,6 @@ class App(ctk.CTk):
         self._sync_compact_ui()
         self._refresh_power_status()
 
-    def _refresh_all_text(self):
-        self.title(self._i18n.t("app.title"))
-        self._header_title_label.configure(text=self._i18n.t("app.title"))
-        self._power_title_label.configure(text="\u26a1 " + self._i18n.t("power.title"))
-        self._power_target_label.configure(text=self._i18n.t("power.target_plan") + ":")
-        self._power_interval_label.configure(text=self._i18n.t("power.interval") + ":")
-        self._power_interval_suffix.configure(text=self._i18n.t("power.seconds"))
-        self._apply_interval_btn.configure(text=self._i18n.t("general.apply"))
-        self._check_btn.configure(text=self._i18n.t("power.check_now"))
-        self._create_schemes_btn.configure(text=self._i18n.t("power.create_schemes_btn"))
-        self._monitor_switch.configure(text=self._i18n.t("power.auto_monitor"))
-        self._startup_title_label.configure(text=self._i18n.t("startup.title"))
-        self._startup_name_entry.configure(placeholder_text=self._i18n.t("startup.name_placeholder"))
-        self._startup_path_entry.configure(placeholder_text=self._i18n.t("startup.path_placeholder"))
-        self._startup_add_btn.configure(text=self._i18n.t("startup.add_btn"))
-        self._startup_add_self_btn.configure(text=self._i18n.t("startup.add_self_btn"))
-        self._startup_remove_self_btn.configure(text=self._i18n.t("startup.remove_self_btn"))
-        self._startup_refresh_btn.configure(text=self._i18n.t("startup.refresh_btn"))
-        self._update_source_filter_dropdown()
-        self._appearance_label.configure(text=self._i18n.t("sidebar.appearance"))
-        self._settings_label.configure(text=self._i18n.t("sidebar.settings"))
-        self._tray_toggle_switch.configure(text=self._i18n.t("tray.minimize_to_tray"))
-        self._update_mode_switch_texts()
-        if hasattr(self, "_compact_plan_btn") and self._compact_plan_btn.winfo_exists():
-            self._compact_plan_btn.configure(text=self._i18n.t("compact.switch_power"))
-        if hasattr(self, "_compact_lang_btn") and self._compact_lang_btn.winfo_exists():
-            self._compact_lang_btn.configure(text=self._i18n.t("compact.switch_language"))
-        if hasattr(self, "_compact_style_btn") and self._compact_style_btn.winfo_exists():
-            self._compact_style_btn.configure(text=self._i18n.t("compact.switch_style"))
-        fit_option_width(self._style_dropdown, list(STYLES.keys()), min_width=100,
-                         max_width=SIDEBAR_EXPANDED - 20)
-        fit_option_width(self._lang_dropdown, [LANG_LABELS[l] for l in SUPPORTED_LANGS],
-                         min_width=80, max_width=SIDEBAR_EXPANDED - 20)
-        fit_entry_width(self._interval_entry, min_width=48, max_width=80, padding=28)
-        fit_entry_width(self._startup_name_entry, min_width=90, max_width=160, padding=28)
-        fit_entry_width(self._startup_path_entry, min_width=140, max_width=350, padding=32)
-        fit_button_width(self._apply_interval_btn, min_width=50, max_width=80)
-        fit_button_width(self._check_btn, min_width=80, max_width=160)
-        fit_button_width(self._startup_refresh_btn, min_width=50, max_width=90)
-        fit_button_width(self._startup_add_btn, min_width=54, max_width=100)
-        fit_button_width(self._startup_add_self_btn, min_width=74, max_width=130)
-        fit_button_width(self._startup_remove_self_btn, min_width=74, max_width=140)
-        if hasattr(self, "_compact_plan_btn") and self._compact_plan_btn.winfo_exists():
-            fit_button_width(self._compact_plan_btn, min_width=88, max_width=132, padding=14)
-        if hasattr(self, "_compact_lang_btn") and self._compact_lang_btn.winfo_exists():
-            fit_button_width(self._compact_lang_btn, min_width=88, max_width=132, padding=14)
-        if hasattr(self, "_compact_style_btn") and self._compact_style_btn.winfo_exists():
-            fit_button_width(self._compact_style_btn, min_width=88, max_width=132, padding=14)
-        if hasattr(self, "_compact_full_btn") and self._compact_full_btn.winfo_exists():
-            fit_button_width(self._compact_full_btn, min_width=58, max_width=88, padding=10)
-        if self._sidebar_expanded:
-            self._toggle_btn.configure(text="\u25c0")
-        else:
-            self._toggle_btn.configure(text="\u25b6")
-        self._update_sort_indicator()
-        self._refresh_power_status()
-        self._refresh_startup_list()
 
     # ==================================================================
     # Column header layout & resize
@@ -2045,14 +2154,20 @@ class App(ctk.CTk):
             self._refresh_startup_list()
 
     def _row_fonts(self) -> Dict[str, ctk.CTkFont]:
-        """One font set for every row — building fonts per row is very slow."""
+        """One font set for every row — building fonts per row is very slow.
+
+        The family is pinned via the Tk named font, not per-widget: leaving it
+        to the default made every CJK glyph fall back mid-string, so mixed
+        Chinese/Latin text had uneven baselines and cramped leading.
+        """
         cached = getattr(self, "_row_font_cache", None)
         if cached is None:
+            fam = _ui_font_family()
             cached = {
-                "name": ctk.CTkFont(size=12, weight="bold"),
-                "path": ctk.CTkFont(size=11),
-                "source": ctk.CTkFont(size=11),
-                "button": ctk.CTkFont(size=11),
+                "name": ctk.CTkFont(family=fam, size=12, weight="bold"),
+                "path": ctk.CTkFont(family=fam, size=11),
+                "source": ctk.CTkFont(family=fam, size=11),
+                "button": ctk.CTkFont(family=fam, size=11),
             }
             self._row_font_cache = cached
         return cached
@@ -2065,20 +2180,20 @@ class App(ctk.CTk):
         """
         s = self._style
         fonts = self._row_fonts()
-        row = ctk.CTkFrame(self._startup_list_frame, height=ROW_HEIGHT, corner_radius=4)
+        # corner_radius=0 on purpose: CTk draws rounding by hand on a canvas,
+        # and at 26 rows that hand-drawn mask alone was ~100 ms per rebuild.
+        row = ctk.CTkFrame(self._startup_list_frame, height=ROW_HEIGHT, corner_radius=0)
         apply_surface_corner(row, s)
-        row.pack(fill="x", pady=1)
+        row.pack(fill="x", pady=(0, 4))
         row.pack_propagate(False)
         self._reg(row, apply_surface_corner)
 
-        # Hover glow — elevate bg, accent border, and reveal the full cell values.
+        # Hover highlights the row without opening an overlay.
         def on_enter(e):
             row.configure(fg_color=s.card_elevated, border_color=s.accent, border_width=1)
-            self._show_cell_tip(row)
 
         def on_leave(e):
             row.configure(fg_color=s.surface, border_color=s.surface, border_width=0)
-            self._hide_cell_tip()
 
         row.bind("<Enter>", on_enter)
         row.bind("<Leave>", on_leave)
@@ -2091,14 +2206,13 @@ class App(ctk.CTk):
                                 text_color=s.text_secondary, anchor="w")
         self._reg(path_lbl, lambda w, s: w.configure(text_color=s.text_secondary))
 
-        # Short source tag: the full description lives in the filter dropdown and
-        # in the hover tooltip, so long labels are never squeezed.
+        # Short source tag; the filter dropdown contains the full description.
         src_lbl = ctk.CTkLabel(row, text=self._source_tag(item.source), font=fonts["source"],
                                text_color=s.text_muted, anchor="w")
         self._reg(src_lbl, lambda w, s: w.configure(text_color=s.text_muted))
 
         open_btn = ctk.CTkButton(
-            row, text=self._i18n.t("startup.location_btn"), width=38, height=18,
+            row, text=self._i18n.t("startup.location_btn"), width=44, height=22,
             font=fonts["button"],
             fg_color=s.card_elevated, hover_color=s.accent,
             text_color=s.text_secondary, corner_radius=3,
@@ -2108,7 +2222,7 @@ class App(ctk.CTk):
             text_color=s.text_secondary))
 
         remove_btn = ctk.CTkButton(
-            row, text=self._i18n.t("startup.remove_btn"), width=30, height=18,
+            row, text=self._i18n.t("startup.remove_btn"), width=40, height=22,
             font=fonts["button"],
             fg_color=s.card_elevated, hover_color=s.error,
             text_color=s.text_secondary, corner_radius=3,
@@ -2123,7 +2237,6 @@ class App(ctk.CTk):
             "source": src_lbl,
             "open": open_btn,
             "remove": remove_btn,
-            "tip": (f"{item.name}\n{item.path}\n{self._format_startup_source(item.source)}",),
         }
         self._row_pool.append(row)
         return row
@@ -2138,63 +2251,7 @@ class App(ctk.CTk):
         widgets["source"].configure(text=self._source_tag(item.source))
         widgets["open"].configure(command=lambda it=item: self._open_startup_location(it))
         widgets["remove"].configure(command=lambda it=item: self._remove_startup_item(it))
-        widgets["tip"] = (f"{item.name}\n{item.path}\n"
-                          f"{self._format_startup_source(item.source)}",)
 
-    def _show_cell_tip(self, row) -> None:
-        """Tooltip with the full value of every cell of a row (needed when clipped).
-
-        It also self-destructs after a few seconds and on every interaction that
-        can move or cover the row, because a leave event alone would let the popup
-        survive clicks and dialogs as a floating remnant.
-        """
-        tip = self._row_widgets.get(id(row), {}).get("tip", ("",))[0]
-        if not tip:
-            return
-        try:
-            x = row.winfo_rootx() + 12
-            y = row.winfo_rooty() + row.winfo_height() + 2
-        except Exception:
-            return
-        if getattr(self, "_cell_tip_row", None) == row and self._cell_tip_alive():
-            return                       # already showing for this row
-        self._hide_cell_tip()
-        window = ctk.CTkToplevel(self)
-        window.overrideredirect(True)
-        window.configure(fg_color=self._style.card_elevated)
-        label = ctk.CTkLabel(window, text=tip, font=ctk.CTkFont(size=11),
-                             text_color=self._style.text_primary, justify="left",
-                             anchor="w")
-        label.pack(padx=8, pady=6)
-        window.geometry(f"+{x}+{y}")
-        self._cell_tip = window
-        self._cell_tip_row = row
-        self._cell_tip_job = self.after(TIP_TIMEOUT_MS, self._hide_cell_tip)
-
-    def _cell_tip_alive(self) -> bool:
-        window = getattr(self, "_cell_tip", None)
-        try:
-            return window is not None and bool(window.winfo_exists())
-        except Exception:
-            return False
-
-    def _hide_cell_tip(self) -> None:
-        job = getattr(self, "_cell_tip_job", None)
-        if job is not None:
-            self._cell_tip_job = None
-            try:
-                self.after_cancel(job)
-            except Exception:
-                pass
-        window = getattr(self, "_cell_tip", None)
-        self._cell_tip = None
-        self._cell_tip_row = None
-        if window is None:
-            return
-        try:
-            window.destroy()
-        except Exception:
-            pass
 
     def _source_tag(self, source: str) -> str:
         """Short source label for the narrow table column."""
@@ -2361,21 +2418,26 @@ class App(ctk.CTk):
         Rebuilding ~8 widgets per row costs seconds on a long list, so the rows
         are pooled and only hidden/destroyed when the list actually shrinks.
         """
-        self._hide_cell_tip()          # rows are about to move or disappear
         self._table_rows.clear()
         self._item_rows.clear()
 
         for index, item in enumerate(items):
             row = self._take_row(item, index)
-            row.pack(fill="x", pady=1)
+            row.pack(fill="x", pady=(0, 4))
             self._table_rows.append(row)
             self._item_rows[self._make_item_key(item)] = row
 
-        # Drop rows that are no longer needed and drop the empty-state label.
-        self._row_pool = self._row_pool[:len(self._table_rows)]
+        # Unused pooled rows are unpacked, not destroyed: the next refresh
+        # almost always needs the same rows back, and rebuilding one costs
+        # 5 Tk widgets plus a round-trip each. Only the empty-state label (not a
+        # pooled row) is destroyed.
+        wanted = set(self._table_rows)
         for widget in self._startup_list_frame.winfo_children():
-            if widget not in self._table_rows:
-                self._row_widgets.pop(id(widget), None)
+            if widget in wanted:
+                continue
+            if widget in self._row_pool:
+                widget.pack_forget()
+            else:
                 widget.destroy()
         self._stylables = [(w, fn) for w, fn in self._stylables if w.winfo_exists()]
 
@@ -2619,7 +2681,6 @@ class App(ctk.CTk):
 
     def _modal(self, title: str, width: int = 460, height: int = 250):
         """Create a themed modal Toplevel centred on the main window."""
-        self._hide_cell_tip()      # a leftover tooltip would float over the dialog
         s = self._style
         window = ctk.CTkToplevel(self)
         window.title(title)
@@ -2657,7 +2718,7 @@ class App(ctk.CTk):
         text.insert("1.0", body)
         text.configure(state="disabled")
 
-        buttons = ctk.CTkFrame(window, fg_color="transparent")
+        buttons = ctk.CTkFrame(window, fg_color="transparent", corner_radius=0)
         buttons.pack(fill="x", padx=14, pady=(0, 12))
 
         confirm_btn = ctk.CTkButton(
@@ -2763,7 +2824,7 @@ class App(ctk.CTk):
             self._persist_config()
             self._refresh_power_status()
 
-        choices = ctk.CTkFrame(window, fg_color="transparent")
+        choices = ctk.CTkFrame(window, fg_color="transparent", corner_radius=0)
         choices.pack(fill="x", padx=16, pady=(0, 4))
 
         enable_switch = ctk.CTkSwitch(
@@ -2781,7 +2842,7 @@ class App(ctk.CTk):
                 return
             self._close_modal(window, "pick")
 
-        buttons = ctk.CTkFrame(window, fg_color="transparent")
+        buttons = ctk.CTkFrame(window, fg_color="transparent", corner_radius=0)
         buttons.pack(fill="x", padx=16, pady=(4, 14))
 
         auto_btn = ctk.CTkButton(buttons, text=self._i18n.t("setup.use_auto"), width=110, height=28,
@@ -2841,7 +2902,7 @@ class App(ctk.CTk):
         def _confirm():
             self._close_modal(window, dropdown.get())
 
-        buttons = ctk.CTkFrame(window, fg_color="transparent")
+        buttons = ctk.CTkFrame(window, fg_color="transparent", corner_radius=0)
         buttons.pack(pady=(0, 12))
         ok_btn = ctk.CTkButton(buttons, text=self._i18n.t("general.ok"), width=90, height=28,
                                command=_confirm)
@@ -3312,7 +3373,7 @@ class App(ctk.CTk):
             return True
         try:
             import pystray
-            icon_img = _create_tray_icon(self._style.accent)
+            icon_img = self._tray_icon_image()
 
             def on_show(icon, item):
                 self._window_visible = True
@@ -3324,7 +3385,7 @@ class App(ctk.CTk):
                 self._post_ui(self._force_quit)
 
             self._tray_icon = pystray.Icon(
-                "pc_auto_scripts", icon_img, "PC System Auto Scripts")
+                "pc_auto_scripts_rem", icon_img, "PC 系统自动脚本")
             self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
             self._tray_thread.start()
 
@@ -3393,10 +3454,17 @@ class App(ctk.CTk):
         except Exception:
             log.exception("tray menu rebuild failed")
 
+    def _tray_icon_image(self):
+        """Tray icon: Rem's face when the art theme is on, otherwise the plain bolt."""
+        if not self._art_active():
+            return _create_tray_icon(self._style.accent)
+        art = rem_theme.rem_avatar(256, self._theme_palette(), self._style.char_ring)
+        return _create_tray_icon(self._style.accent, art)
+
     def _update_tray_icon_color(self):
         if self._tray_icon is not None:
             try:
-                self._tray_icon.icon = _create_tray_icon(self._style.accent)
+                self._tray_icon.icon = self._tray_icon_image()
             except Exception:
                 log.debug("tray icon color update failed")
 
@@ -3405,7 +3473,6 @@ class App(ctk.CTk):
     # ==================================================================
 
     def _on_close(self):
-        self._hide_cell_tip()
         if self.cfg.get("minimize_to_tray", True) and self._setup_tray():
             self._window_visible = False
             self.withdraw()
@@ -3415,7 +3482,6 @@ class App(ctk.CTk):
     def _force_quit(self):
         self._running = False
         self._closing = True
-        self._hide_cell_tip()
         _stop_ipc_server()
         # Stop the worker for this run only — never rewrite the user preference.
         self._stop_monitor(save=False)
@@ -3474,6 +3540,12 @@ class App(ctk.CTk):
 # ---------------------------------------------------------------------------
 
 def main():
+    if "--check-runtime" in sys.argv:
+        # Validate the packaged runtime without creating a window or touching system settings.
+        from tkinter import Tcl
+        Tcl().eval("info patchlevel")
+        rem_theme.draw_rem(32).load()
+        return
     mode = _enable_dpi_awareness()
     setup_logging()
     log.info("starting: DPI awareness=%s", mode)
