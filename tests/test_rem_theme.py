@@ -7,18 +7,18 @@ import rem_theme
 
 
 class RemArtTests(unittest.TestCase):
-    def test_rem_theme_available_and_chinese_only(self):
+    def test_system_theme_is_default_and_rem_remains_available(self):
         from i18n import I18n, SUPPORTED_LANGS, T
         from styles import STYLES, DEFAULT_STYLE
 
         self.assertIn("Rem", STYLES)
-        self.assertEqual(DEFAULT_STYLE, "Rem")
+        self.assertEqual(DEFAULT_STYLE, "System")
         self.assertEqual(SUPPORTED_LANGS, ["zh"])
         self.assertEqual(I18n("en").t("app.title"), "PC 系统自动脚本")
         self.assertTrue(all(set(entry) == {"zh"} for entry in T.values()))
 
     def test_style_switching_is_wired(self):
-        """Six design systems exist, so the UI must expose a picker for them."""
+        """The UI exposes a picker for the available themes."""
         import ast
         from pathlib import Path
         tree = ast.parse((Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8"))

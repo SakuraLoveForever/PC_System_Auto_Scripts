@@ -43,19 +43,25 @@ class FakeRegistry:
         raise OSError(2, "not found")
 
     def query(self, source, name):
-        if (source, name) not in self.values:
+        key = self._value_key(source, name)
+        if key not in self.values:
             raise OSError(2, "value not found")
-        return self.values[(source, name)]
+        return self.values[key]
 
     def set(self, source, name, value_type, data):
         if source in self.fail_set:
             raise OSError(5, "Access is denied")
-        self.values[(source, name)] = (data, value_type)
+        self.values[self._value_key(source, name)] = (data, value_type)
 
     def delete(self, source, name):
-        if (source, name) not in self.values:
+        key = self._value_key(source, name)
+        if key not in self.values:
             raise OSError(2, "value not found")
-        del self.values[(source, name)]
+        del self.values[key]
+
+    def _value_key(self, source, name):
+        return next((key for key in self.values if key[0] == source
+                     and key[1].lower() == name.lower()), (source, name))
 
     def enumerate(self, source):
         return [(name, data, vtype) for (src, name), (data, vtype) in self.values.items()
@@ -114,7 +120,7 @@ class StartupTestCase(unittest.TestCase):
     def _enum_value(self, key, index):
         rows = self.registry.enumerate(key.source)
         if index >= len(rows):
-            raise OSError(22, "no more data")
+            raise OSError(0, "no more data", None, 259)
         return rows[index]
 
     def _restore_data_env(self):
@@ -208,6 +214,23 @@ class StartupTestCase(unittest.TestCase):
         sources = sorted((item.name, item.source) for item in items)
         self.assertEqual(sources, [("A", "registry"), ("B", "registry_hklm")])
 
+    def test_unnamed_registry_default_is_neither_listed_nor_removed(self):
+        default = sm.StartupItem("", r"C:\default.exe", "registry")
+        self.registry.set("registry", default.name, winreg.REG_SZ, default.path)
+        self.registry.set("registry", "Named", winreg.REG_SZ, r"C:\named.exe")
+        self.assertEqual([item.name for item in sm.get_registry_items()], ["Named"])
+        self.assertEqual(sm.remove_with_backup(default, self.backup_root), "remove_failed")
+        self.assertFalse(sm.remove_item(default))
+        self.assertEqual(self.registry.values[("registry", "")][0], default.path)
+
+    def test_access_failure_reports_the_source_and_available_rows(self):
+        self.registry.set("registry", "A", winreg.REG_SZ, r"C:\a.exe")
+        self.registry.fail_open.add("registry_hklm")
+        with self.assertRaises(OSError) as caught:
+            sm.get_all_items()
+        self.assertIn("registry_hklm", str(caught.exception))
+        self.assertEqual([item.name for item in caught.exception.items], ["A"])
+
     # --- P1.4: reliable commands ------------------------------------------
 
     def test_path_with_spaces_is_quoted(self):
@@ -245,6 +268,18 @@ class StartupTestCase(unittest.TestCase):
             command = sm.build_self_startup_command()
         self.assertEqual(command, r'"C:\Apps\My App\app.exe" --startup')
 
+    def test_adding_self_in_source_mode_quotes_executable_and_script_separately(self):
+        self.assertTrue(callable(getattr(sm, "build_self_startup_parts", None)))
+        script = self.root / "app with spaces.py"
+        script.touch()
+        with mock.patch.object(sm.sys, "frozen", False, create=True), \
+             mock.patch.object(sm.sys, "argv", [str(script)]), \
+             mock.patch.object(sm.sys, "executable", r"C:\Python 3\python.exe"):
+            exe, args = sm.build_self_startup_parts()
+            self.assertEqual(sm.add_registry_startup("self", exe, args), "created")
+        self.assertEqual(self.registry.values[("registry", "self")][0],
+                         f'"C:\\Python 3\\python.exe" "{script}" --startup')
+
     def test_self_command_falls_back_when_argv0_is_a_python_flag(self):
         # `python -c ...` or an interactive session must not produce '-c' as the target.
         with mock.patch.object(sm.sys, "frozen", False, create=True), \
@@ -275,6 +310,15 @@ class StartupTestCase(unittest.TestCase):
         status = sm.add_registry_startup("app", r"C:\new.exe", overwrite=True)
         self.assertEqual(status, "overwritten")
         self.assertEqual(self.registry.values[("registry", "app")][0], r'"C:\new.exe"')
+
+    def test_approved_overwrite_refuses_a_command_changed_after_confirmation(self):
+        self.assertTrue(callable(getattr(sm, "get_registry_startup_command", None)))
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\old.exe")
+        confirmed = sm.get_registry_startup_command("app")
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\replaced.exe")
+        self.assertEqual(sm.add_registry_startup("app", r"C:\new.exe", overwrite=True,
+                                                expected_command=confirmed), "stale")
+        self.assertEqual(self.registry.values[("registry", "app")][0], r"C:\replaced.exe")
 
     def test_add_creates_new_value(self):
         self.assertEqual(sm.add_registry_startup("fresh", r"C:\new.exe"), "created")
@@ -307,6 +351,106 @@ class StartupTestCase(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "@echo off\n")
         self.assertEqual(sm.list_backups(self.backup_root), [],
                          "a restored entry leaves the pending list")
+
+    def test_restore_refuses_to_replace_a_recreated_startup_file(self):
+        target = self.user_folder / "tool.cmd"
+        target.write_bytes(b"old")
+        entry = sm.backup_folder_item(str(target), "startup_folder", self.backup_root)
+        target.write_bytes(b"new")
+        self.assertFalse(sm.restore_backup(entry, self.backup_root))
+        self.assertEqual(target.read_bytes(), b"new")
+
+    def test_restore_refuses_to_replace_a_recreated_registry_value(self):
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\old.exe")
+        entry = sm.backup_registry_value("app", "registry", self.backup_root)
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\new.exe")
+        self.assertFalse(sm.restore_backup(entry, self.backup_root))
+        self.assertEqual(self.registry.values[("registry", "app")][0], r"C:\new.exe")
+
+    def test_restore_refuses_an_outdated_confirmed_backup_of_the_same_path(self):
+        target = self.user_folder / "tool.cmd"
+        target.write_bytes(b"old")
+        old_entry = sm.backup_folder_item(str(target), "startup_folder", self.backup_root)
+        target.write_bytes(b"new")
+        new_entry = sm.backup_folder_item(str(target), "startup_folder", self.backup_root)
+        target.unlink()
+        self.assertFalse(sm.restore_backup(old_entry, self.backup_root))
+        self.assertFalse(target.exists())
+        self.assertTrue(sm.restore_backup(new_entry, self.backup_root))
+        self.assertEqual(target.read_bytes(), b"new")
+
+    def test_malformed_registry_backup_is_refused_without_writing(self):
+        entry = {"identity": "registry:app", "kind": "registry", "source": "registry",
+                 "name": "app", "value_type": winreg.REG_SZ}
+        (self.backup_root / sm.BACKUP_FILENAME).write_text(json.dumps([entry]), encoding="utf-8")
+        self.assertFalse(sm.restore_backup(entry, self.backup_root))
+        self.assertEqual(self.registry.values, {})
+
+    def test_restore_refuses_payload_outside_backup_directory(self):
+        payload = self.root / "outside.cmd"
+        payload.write_bytes(b"outside")
+        target = self.user_folder / "tool.cmd"
+        entry = {"identity": f"startup_folder:{target}", "kind": "folder",
+                 "source": "startup_folder", "path": str(target), "backup_path": str(payload)}
+        (self.backup_root / sm.BACKUP_FILENAME).write_text(json.dumps([entry]), encoding="utf-8")
+        self.assertFalse(sm.restore_backup(entry, self.backup_root))
+        self.assertFalse(target.exists())
+
+    def test_case_changes_keep_one_identity_and_deduplicate_legacy_backup(self):
+        upper = sm.StartupItem("APP", r"C:\old.exe", "registry")
+        lower = sm.StartupItem("app", r"C:\new.exe", "registry")
+        self.assertEqual(upper.identity(), lower.identity())
+        self.registry.set("registry", upper.name, winreg.REG_SZ, upper.path)
+        entry = sm.backup_item(upper, self.backup_root)
+        entry["identity"] = "registry:APP"
+        (self.backup_root / sm.BACKUP_FILENAME).write_text(json.dumps([entry]), encoding="utf-8")
+        self.registry.delete("registry", upper.name)
+        self.registry.set("registry", lower.name, winreg.REG_SZ, lower.path)
+        sm.backup_item(lower, self.backup_root)
+        self.registry.delete("registry", lower.name)
+        pending = sm.list_backups(self.backup_root)
+        self.assertEqual([backup["name"] for backup in pending], ["app"])
+
+    def test_remove_leaves_file_intact_when_backup_cannot_be_saved(self):
+        self.assertTrue(callable(getattr(sm, "remove_with_backup", None)))
+        target = self.user_folder / "tool.cmd"
+        target.write_bytes(b"existing")
+        unavailable = self.root / "not-a-directory"
+        unavailable.touch()
+        item = sm.StartupItem("tool", str(target), "startup_folder")
+        self.assertEqual(sm.remove_with_backup(item, unavailable), "backup_failed")
+        self.assertEqual(target.read_bytes(), b"existing")
+
+    def test_remove_leaves_registry_value_when_ledger_is_corrupt(self):
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\old.exe")
+        ledger = self.backup_root / sm.BACKUP_FILENAME
+        ledger.write_text("corrupt", encoding="utf-8")
+        item = sm.get_registry_items()[0]
+        self.assertEqual(sm.remove_with_backup(item, self.backup_root), "backup_failed")
+        self.assertEqual(self.registry.values[("registry", "app")][0], r"C:\old.exe")
+        self.assertEqual(ledger.read_text(encoding="utf-8"), "corrupt")
+
+    def test_remove_refuses_stale_registry_snapshot_then_removes_current_value(self):
+        self.assertTrue(callable(getattr(sm, "remove_with_backup", None)))
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\old.exe")
+        stale = sm.get_registry_items()[0]
+        self.registry.set("registry", "app", winreg.REG_SZ, r"C:\new.exe")
+        self.assertEqual(sm.remove_with_backup(stale, self.backup_root), "stale")
+        self.assertEqual(self.registry.values[("registry", "app")][0], r"C:\new.exe")
+        current = sm.get_registry_items()[0]
+        self.assertEqual(sm.remove_with_backup(current, self.backup_root), "removed")
+        self.assertNotIn(("registry", "app"), self.registry.values)
+        self.assertTrue(sm.restore_backup(sm.list_backups(self.backup_root)[0], self.backup_root))
+        self.assertEqual(self.registry.values[("registry", "app")][0], r"C:\new.exe")
+
+    def test_remove_refuses_startup_file_changed_after_listing(self):
+        self.assertTrue(callable(getattr(sm, "remove_with_backup", None)))
+        target = self.user_folder / "tool.cmd"
+        target.write_bytes(b"old")
+        item = sm.get_startup_folder_items()[0]
+        target.write_bytes(b"changed")
+        self.assertEqual(sm.remove_with_backup(item, self.backup_root), "stale")
+        self.assertEqual(target.read_bytes(), b"changed")
 
     def test_registry_backup_restores_value_and_type(self):
         self.registry.set("registry", "app", winreg.REG_EXPAND_SZ, r"%ProgramFiles%\a.exe")

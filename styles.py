@@ -55,7 +55,29 @@ class DesignStyle:
 
 
 STYLES: Dict[str, DesignStyle] = {
-    # ── Magic Dark (default) ────────────────────────────────────────────
+    "System": DesignStyle(
+        name="System",
+        description="Compact Windows control center",
+        canvas="#14171D",
+        surface="#1B2028",
+        card="#212731",
+        card_elevated="#2B3442",
+        text_primary="#F2F5FA",
+        text_secondary="#BCC8D8",
+        text_muted="#9BA9BD",
+        accent="#81AEF7",
+        accent_hover="#A7C7FA",
+        accent_text="#101C32",
+        border="#3B4657",
+        border_strong="#536783",
+        success="#83D7AF",
+        warning="#F4C886",
+        error="#FF9CA7",
+        button_radius=6,
+        card_radius=8,
+        input_radius=6,
+    ),
+    # ── Magic Dark ─────────────────────────────────────────────────────
     "Magic Dark": DesignStyle(
         name="Magic Dark",
         description="Near-black glass surfaces with violet-to-pink Magic UI accents",
@@ -230,4 +252,4 @@ STYLE_ALIASES = {
     "Spotify": "Magic Ocean",
 }
 
-DEFAULT_STYLE = "Rem"
+DEFAULT_STYLE = "System"

@@ -48,10 +48,10 @@ class ConfigTestCase(unittest.TestCase):
 
     # --- P1.1: monitor_enabled must survive a restart ---------------------
 
-    def test_legacy_appearance_settings_migrate_to_chinese_rem(self):
+    def test_legacy_appearance_settings_migrate_to_chinese_system(self):
         self._write_config({"style": "Magic Dark", "language": "en", "monitor_enabled": False})
         cfg = self.main.load_config()
-        self.assertEqual(cfg["style"], "Rem")
+        self.assertEqual(cfg["style"], "System")
         self.assertEqual(cfg["language"], "zh")
         self.assertFalse(cfg["monitor_enabled"])
 
@@ -70,9 +70,9 @@ class ConfigTestCase(unittest.TestCase):
         self._write_config({"monitor_enabled": True})
         self.assertTrue(self.main.load_config()["monitor_enabled"])
 
-    def test_first_run_defaults_to_monitoring_enabled(self):
+    def test_first_run_defaults_to_monitoring_disabled(self):
         cfg = self.main.load_config()
-        self.assertTrue(cfg["monitor_enabled"])
+        self.assertFalse(cfg["monitor_enabled"])
         self.assertTrue(self.main.CONFIG_FILE.exists(), "first run should create config.json")
 
     # --- P2.7: validation -------------------------------------------------
@@ -81,7 +81,7 @@ class ConfigTestCase(unittest.TestCase):
         self._write_config('[1, 2, 3]')
         cfg = self.main.load_config()
         self.assertEqual(cfg["check_interval"], 60)
-        self.assertTrue(cfg["monitor_enabled"])
+        self.assertFalse(cfg["monitor_enabled"])
 
     def test_top_level_null_falls_back_to_defaults(self):
         self._write_config('null')

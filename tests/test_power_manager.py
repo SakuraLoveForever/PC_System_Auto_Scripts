@@ -186,6 +186,15 @@ class ReadOnlyTestCase(unittest.TestCase):
             result = pm.switch_active_plan(HIGH_PERF_GUID)
         self.assertFalse(result.ok, "an unchanged active scheme is a failure")
 
+    def test_switch_to_a_different_guid_is_not_success(self):
+        with mock.patch.object(pm, "_attempt_api_switch",
+                               return_value=pm.SwitchResult(True, "api")), \
+             mock.patch.object(pm, "_run_powercfg_raw", return_value=(0, "")), \
+             mock.patch.object(pm, "active_plan_guid",
+                               side_effect=[BALANCED_GUID, ULTIMATE_GUID, ULTIMATE_GUID]):
+            result = pm.switch_active_plan(HIGH_PERF_GUID)
+        self.assertFalse(result.ok, "the requested GUID never became active")
+
     def test_switching_to_the_active_plan_is_a_noop_success(self):
         with mock.patch.object(pm, "active_plan_guid", return_value=HIGH_PERF_GUID), \
              mock.patch.object(pm, "_attempt_api_switch") as api:
@@ -316,6 +325,107 @@ class MonitorThreadTestCase(unittest.TestCase):
             self.assertLess(elapsed, 1.0, "stop() must not block the GUI thread")
             self.assertTrue(monitor.wait_until_stopped(5.0))
 
+    def test_restart_waits_for_the_previous_query_and_discards_its_result(self):
+        entered = threading.Event()
+        release = threading.Event()
+        restarted = threading.Event()
+        events = []
+        monitor = pm.PowerMonitor(on_status_change=events.append)
+
+        def snapshot():
+            if not entered.is_set():
+                entered.set()
+                release.wait(3)
+                name = "old check"
+            else:
+                restarted.set()
+                name = "new check"
+            return pm.PlanSnapshot(plans=[
+                pm.PowerPlan(guid=HIGH_PERF_GUID, name=name, is_active=True, is_acceptable=True),
+            ])
+
+        with mock.patch.object(pm, "get_power_snapshot", side_effect=snapshot):
+            monitor.start()
+            first = monitor.worker_thread
+            try:
+                self.assertTrue(entered.wait(2))
+                monitor.stop()
+                monitor.start()
+                self.assertFalse(restarted.wait(0.25), "restart overlapped the blocked query")
+                release.set()
+                self.assertTrue(restarted.wait(2), "the requested restart was lost")
+                deadline = time.monotonic() + 2
+                while not events and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertEqual([event["plan_name"] for event in events], ["new check"])
+            finally:
+                release.set()
+                monitor.stop()
+                self.assertTrue(monitor.wait_until_stopped(2))
+                first.join(2)
+
+    def test_manual_power_actions_are_busy_during_the_scheduled_query(self):
+        entered = threading.Event()
+        release = threading.Event()
+        monitor = pm.PowerMonitor()
+        plan = pm.PowerPlan(guid=HIGH_PERF_GUID, name="high", is_active=True, is_acceptable=True)
+        ready = pm.PlanSnapshot(plans=[plan])
+
+        def snapshot():
+            if not entered.is_set():
+                entered.set()
+                release.wait(3)
+            return ready
+
+        with mock.patch.object(pm, "get_power_snapshot", side_effect=snapshot) as get, \
+             mock.patch.object(pm, "switch_active_plan") as switch:
+            monitor.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(monitor.check_now()["status"], "busy")
+                self.assertEqual(monitor.switch_now(BALANCED_GUID).error, "busy")
+                switch.assert_not_called()
+                self.assertEqual(get.call_count, 1)
+            finally:
+                monitor.stop()
+                release.set()
+                self.assertTrue(monitor.wait_until_stopped(2))
+
+    def test_stop_cancels_a_switch_waiting_on_the_pre_activation_read(self):
+        entered = threading.Event()
+        release = threading.Event()
+        events = []
+        monitor = pm.PowerMonitor(on_status_change=events.append)
+        monitor.target_guid = HIGH_PERF_GUID
+        snapshot = pm.PlanSnapshot(plans=[
+            pm.PowerPlan(guid=BALANCED_GUID, name="balanced", is_active=True),
+            pm.PowerPlan(guid=HIGH_PERF_GUID, name="high", is_acceptable=True),
+        ])
+
+        def active_guid():
+            entered.set()
+            release.wait(3)
+            return BALANCED_GUID
+
+        with mock.patch.object(pm, "get_power_snapshot", return_value=snapshot), \
+             mock.patch.object(pm, "active_plan_guid", side_effect=active_guid), \
+             mock.patch.object(pm, "_attempt_api_switch",
+                               return_value=pm.SwitchResult(True, "api")) as switch, \
+             mock.patch.object(pm, "_run_powercfg_raw", return_value=(0, "")) as powercfg:
+            monitor.start()
+            try:
+                self.assertTrue(entered.wait(2), "check never prepared the switch")
+                monitor.stop()
+                release.set()
+                self.assertTrue(monitor.wait_until_stopped(2))
+                switch.assert_not_called()
+                powercfg.assert_not_called()
+                self.assertEqual(events, [])
+            finally:
+                monitor.stop()
+                release.set()
+                monitor.wait_until_stopped(2)
+
     def test_check_now_never_overlaps(self):
         monitor = pm.PowerMonitor(interval_seconds=10)
         entered = threading.Event()
@@ -346,6 +456,50 @@ class MonitorThreadTestCase(unittest.TestCase):
             worker.join(5.0)
         self.assertEqual(concurrent, [], "two checks ran at the same time")
         self.assertEqual(second["status"], "busy")
+
+    def test_stop_cancels_manual_power_actions_with_monitoring_disabled(self):
+        snapshot = pm.PlanSnapshot(plans=[
+            pm.PowerPlan(guid=BALANCED_GUID, name="balanced", is_active=True),
+            pm.PowerPlan(guid=HIGH_PERF_GUID, name="high", is_acceptable=True),
+        ])
+        for action in ("correct", "switch"):
+            with self.subTest(action=action):
+                entered = threading.Event()
+                release = threading.Event()
+                monitor = pm.PowerMonitor()
+                monitor.target_guid = HIGH_PERF_GUID
+                results = []
+
+                def slow_read(value):
+                    entered.set()
+                    release.wait(3)
+                    return value
+
+                def perform():
+                    if action == "correct":
+                        results.append(monitor.check_now()["status"])
+                    else:
+                        results.append(monitor.switch_now(HIGH_PERF_GUID).error)
+
+                with mock.patch.object(pm, "get_power_snapshot",
+                                       side_effect=lambda: slow_read(snapshot)), \
+                     mock.patch.object(pm, "active_plan_guid",
+                                       side_effect=lambda: slow_read(BALANCED_GUID)), \
+                     mock.patch.object(pm, "_attempt_api_switch",
+                                       return_value=pm.SwitchResult(True, "api")) as api, \
+                     mock.patch.object(pm, "_run_powercfg_raw", return_value=(0, "")) as powercfg:
+                    worker = threading.Thread(target=perform)
+                    worker.start()
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        monitor.stop()
+                    finally:
+                        release.set()
+                        worker.join(2)
+                    self.assertFalse(worker.is_alive())
+                    api.assert_not_called()
+                    powercfg.assert_not_called()
+                    self.assertEqual(results, ["cancelled"])
 
     def test_worker_exception_is_reported_and_state_reflects_reality(self):
         results = []
@@ -418,7 +572,7 @@ class MonitorThreadTestCase(unittest.TestCase):
                                return_value=pm.SwitchResult(True, "api")) as switcher:
             result = monitor.check_now()
         self.assertEqual(result["status"], "fixed")
-        switcher.assert_called_once_with(HIGH_PERF_GUID)
+        self.assertEqual([call.args for call in switcher.call_args_list], [(HIGH_PERF_GUID,)])
 
     def test_unusable_target_is_skipped_and_the_next_one_is_used(self):
         """A plan Windows rejects must not stop the app from fixing the plan."""
@@ -436,7 +590,7 @@ class MonitorThreadTestCase(unittest.TestCase):
         try:
             with mock.patch.object(pm, "get_power_snapshot", return_value=snapshot), \
                  mock.patch.object(pm, "switch_active_plan",
-                                   side_effect=lambda guid: outcomes[guid]) as switcher:
+                                   side_effect=lambda guid, **kwargs: outcomes[guid]) as switcher:
                 result = monitor.check_now()
             self.assertEqual(result["status"], "fixed")
             self.assertEqual(result["target_guid"], HIGH_PERF_GUID)
@@ -460,7 +614,7 @@ class MonitorThreadTestCase(unittest.TestCase):
                 pm.PowerPlan(guid=HIGH_PERF_GUID, name="高性能", is_acceptable=True),
             ]
             snapshot = pm.PlanSnapshot(plans=plans)
-            def reject_dead(guid):
+            def reject_dead(guid, **kwargs):
                 if guid == ULTIMATE_GUID:
                     return pm.SwitchResult(False, "api", "not_supported")
                 # A real switch changes the active scheme.
@@ -531,7 +685,7 @@ class MonitorThreadTestCase(unittest.TestCase):
         ])
         calls = []
 
-        def fake_switch(guid):
+        def fake_switch(guid, **kwargs):
             calls.append(guid)
             if guid == HIGH_PERF_GUID:
                 return pm.SwitchResult(True, "api")

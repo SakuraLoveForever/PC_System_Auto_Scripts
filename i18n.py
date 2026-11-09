@@ -37,7 +37,7 @@ T: Dict[str, Dict[str, str]] = {
         "zh": "秒"
     },
     "power.check_now": {
-        "zh": "立即检查"
+        "zh": "立即纠正"
     },
     "power.auto_monitor": {
         "zh": "自动监控"
@@ -293,18 +293,6 @@ T: Dict[str, Dict[str, str]] = {
     },
     "tray.exit": {
         "zh": "退出"
-    },
-    "compact.toggle": {
-        "zh": "精简"
-    },
-    "compact.full": {
-        "zh": "完整"
-    },
-    "compact.current_plan": {
-        "zh": "当前"
-    },
-    "compact.switch_power": {
-        "zh": "切换电源"
     },
     "general.ok": {
         "zh": "确定"

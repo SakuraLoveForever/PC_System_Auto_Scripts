@@ -10,10 +10,12 @@ Run:  python -m unittest discover -s tests -v
 
 from __future__ import annotations
 
+import ctypes
 import sys
+import queue
 import tempfile
+import threading
 import time
-import tkinter
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -31,6 +33,12 @@ if not _GUI_IMPORT_ERROR:
     import main as main_module
     import power_manager as pm
     import startup_manager as sm
+
+
+def setUpModule():
+    if not _GUI_IMPORT_ERROR and sys.platform == "win32":
+        from tests.isolated_desktop import enter_isolated_desktop
+        enter_isolated_desktop()
 
 BALANCED_GUID = "381b4222-f694-41f0-9685-ff5bb260df2e"
 HIGH_PERF_GUID = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
@@ -65,13 +73,14 @@ class GuiRegressionTestCase(unittest.TestCase):
             mock.patch.object(main_module, "ICON_FILE", self.root / "app_icon.ico"),
             mock.patch.object(main_module, "_create_tray_icon", return_value=object()),
             mock.patch.object(main_module, "get_power_snapshot", side_effect=lambda: self.snapshot),
+            mock.patch.object(pm, "get_power_snapshot", side_effect=lambda: self.snapshot),
             mock.patch.object(main_module, "get_all_items", side_effect=self._get_all_items),
-            mock.patch.object(main_module, "set_active_plan", side_effect=self._set_active_plan),
+            mock.patch.object(pm, "switch_active_plan", side_effect=self._set_active_plan),
             mock.patch.object(main_module, "create_missing_builtin_schemes",
                               side_effect=self._create_schemes),
-            mock.patch.object(main_module, "backup_item", side_effect=self._backup_item),
-            mock.patch.object(main_module, "remove_item", side_effect=self._remove_item),
-            mock.patch.object(main_module, "restore_last_backup", return_value={"name": "x"}),
+            mock.patch.object(main_module, "remove_with_backup", side_effect=self._remove_with_backup),
+            mock.patch.object(main_module, "restore_backup", return_value=True),
+            mock.patch.object(main_module, "get_registry_startup_command", side_effect=self._get_current_command),
             mock.patch.object(main_module, "list_backups", side_effect=lambda *a, **k: []),
             mock.patch.object(main_module, "add_registry_startup",
                               side_effect=self._add_registry_startup),
@@ -87,18 +96,23 @@ class GuiRegressionTestCase(unittest.TestCase):
 
         self.app = main_module.App()
         self.app.deiconify()
-        self._wait_for(lambda: self.app._startup_items_cache is not None, 2.0)
-        self._pump(0.15)
+        self.assertTrue(self._wait_for(
+            lambda: self.app._startup_ready and HIGH_PERF_GUID in self.app._label_by_guid, 4.0))
 
     def tearDown(self):
         try:
             self.app.power_monitor.stop()
             self.app.power_monitor.wait_until_stopped(2.0)
-            self.app._closing = True
-            self.app.destroy()
+            self._destroy_app()
         except Exception:
             pass
         self._tmp.cleanup()
+
+    def _destroy_app(self):
+        self.app._closing = True
+        for callback in self.app.tk.splitlist(self.app.tk.call("after", "info")):
+            self.app.after_cancel(callback)
+        self.app.destroy()
 
     # --- helpers / test doubles -------------------------------------------
 
@@ -120,27 +134,32 @@ class GuiRegressionTestCase(unittest.TestCase):
     def _get_all_items(self):
         return list(self.registry.values())
 
-    def _set_active_plan(self, guid):
+    def _set_active_plan(self, guid, can_activate=None):
+        if can_activate is not None and not can_activate():
+            return pm.SwitchResult(ok=False, error="cancelled")
         self.switched.append(guid)
-        return True
+        return pm.SwitchResult(ok=True)
 
     def _create_schemes(self, plans=None):
         self.created.append(plans)
         return [pm.SchemeCreateResult(
             name="卓越性能", ok=True, guid="e9a42b02-d5df-448d-aa00-03f14749eb61")]
 
-    def _backup_item(self, item, data_root=None):
-        return {"identity": item.identity(), "kind": item.kind}
-
-    def _remove_item(self, item):
+    def _remove_with_backup(self, item, data_root=None):
         self.registry.pop(item.identity(), None)
-        return True
+        return "removed"
 
-    def _add_registry_startup(self, name, path, arguments="", overwrite=False):
-        key = f"registry:{name}"
+    def _get_current_command(self, name):
+        item = self.registry.get(sm.normalize_key("registry", name))
+        return item.path if item else None
+
+    def _add_registry_startup(self, name, path, arguments="", overwrite=False, expected_command=None):
+        key = sm.normalize_key("registry", name)
         existing = self.registry.get(key)
         if existing is not None and not overwrite:
             return "exists"
+        if overwrite and self._get_current_command(name) != expected_command:
+            return "stale"
         self.registry[key] = sm.StartupItem(name=name, path=path, source="registry")
         return "overwritten" if existing is not None else "created"
 
@@ -174,18 +193,45 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.assertEqual(self.switched, [], "a plain refresh must not call setactive")
         self.assertEqual(self.created, [], "a plain refresh must not call duplicatescheme")
 
+    def test_repeated_check_clicks_share_one_operation(self):
+        release = threading.Event()
+        calls = queue.Queue()
+
+        def slow_check():
+            calls.put(True)
+            release.wait(3)
+            return {"status": "ok"}
+
+        with mock.patch.object(self.app.power_monitor, "check_now", side_effect=slow_check):
+            try:
+                self.app._check_now()
+                self.app._check_now()
+                calls.get(timeout=1)
+                with self.assertRaises(queue.Empty):
+                    calls.get(timeout=0.2)
+                self.app._nav_buttons["startup"].invoke()
+                self.app.update()
+                self.assertTrue(self.app._pages["startup"].winfo_ismapped())
+                self.assertEqual(self.app._check_btn.cget("state"), "disabled")
+            finally:
+                release.set()
+            self.assertTrue(self._wait_for(lambda: self.app._check_btn.cget("state") == "normal"))
+
     def test_chinese_only_and_theme_picker_present(self):
         self.switched.clear()
         self.created.clear()
         self.assertEqual(self.app._i18n.lang, "zh")
-        self.assertEqual(self.app._style.name, "Rem")
+        self.assertEqual(self.app._style.name, "System")
         # English was dropped, so no language control exists; the theme picker
         # does, because six design systems ship.
         self.assertFalse(hasattr(self.app, "_lang_dropdown"))
         self.assertTrue(hasattr(self.app, "_style_dropdown"))
-        self.app._toggle_sidebar()
-        self.app._toggle_sidebar()
-        self._pump(0.3)
+        self.app._nav_buttons["settings"].invoke()
+        self.app.update()
+        self.assertTrue(self.app._style_dropdown.winfo_ismapped())
+        self.app._switch_style("Rem")
+        self.assertEqual(self.app.cfg["ui_theme"], "Rem")
+        self.app._nav_buttons["power"].invoke()
         self.assertEqual(self.switched, [])
         self.assertEqual(self.created, [])
 
@@ -219,6 +265,8 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.app._on_target_changed(label)
         self.assertEqual(self.app.power_monitor.target_guid, HIGH_PERF_GUID)
         self.assertEqual(self.app.cfg["target_guid"], HIGH_PERF_GUID)
+        self.assertEqual(self.switched, [], "changing monitor policy must not switch the active plan")
+        self.app._do_switch_plan(HIGH_PERF_GUID)
         self.assertTrue(self._wait_for(lambda: HIGH_PERF_GUID in self.switched, 2.0))
 
     def test_missing_target_is_surfaced_not_silently_replaced(self):
@@ -282,7 +330,7 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.registry[item.identity()] = item
         self.confirm_answer = False
         self.app._remove_startup_item(item)
-        self._pump(0.2)
+        self.assertTrue(self._wait_for(lambda: bool(self.confirm_calls)))
         self.assertEqual(len(self.confirm_calls), 1)
         body = self.confirm_calls[0]["body"]
         self.assertIn("demo", body)
@@ -296,7 +344,7 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.registry[lnk.identity()] = lnk
         self.confirm_answer = True
         self.app._remove_startup_item(cmd)
-        self._pump(0.2)
+        self.assertTrue(self._wait_for(lambda: cmd.identity() not in self.registry))
         self.assertNotIn(cmd.identity(), self.registry)
         self.assertIn(lnk.identity(), self.registry, "the same-named .lnk must survive")
 
@@ -306,25 +354,33 @@ class GuiRegressionTestCase(unittest.TestCase):
         self._pump(0.1)
         self.assertEqual(self.confirm_calls, [], "an unknown source must be refused outright")
 
+    def test_failed_backup_leaves_entry_and_explains_why(self):
+        item = sm.StartupItem(name="demo", path=r"C:\demo.exe", source="registry")
+        self.registry[item.identity()] = item
+        with mock.patch.object(main_module, "remove_with_backup", return_value="backup_failed"):
+            self.app._remove_startup_item(item)
+            self.assertTrue(self._wait_for(lambda: "备份失败" in self._status_text()))
+        self.assertIn(item.identity(), self.registry)
+
+    def _fill_startup_form(self, name, path):
+        self.app._nav_buttons["startup"].invoke()
+        self.app._startup_add_toggle.invoke()
+        self.app._startup_name_entry.insert(0, name)
+        self.app._startup_path_entry.insert(0, path)
+        self.app._startup_add_btn.invoke()
+
     def test_added_item_follows_current_sort_and_filter(self):
         self.registry["registry:zeta"] = sm.StartupItem(
             name="zeta", path=r"C:\z\zeta.exe", source="registry")
         self.app._refresh_startup_list(force=True)
         self._wait_for(lambda: len(self.app._startup_items_cache) == 1, 2.0)
 
-        self.app._startup_name_entry.delete(0, "end")
-        self.app._startup_name_entry.insert(0, "alpha")
-        self.app._startup_path_entry.delete(0, "end")
-        self.app._startup_path_entry.insert(0, r"C:\a\alpha.exe")
-        self.app._add_startup_item()
+        self._fill_startup_form("alpha", r"C:\a\alpha.exe")
         self.assertTrue(self._wait_for(
             lambda: len(self.app._startup_items_cache) == 2, 2.0),
             "the new item must appear in the cache")
 
-        rendered = self.app._sorted_startup_items()
-        names = [item.name for item in rendered]
-        self.assertEqual(names, ["alpha", "zeta"], "the current sort must be re-applied")
-        self.assertEqual(len(self.app._table_rows), 2, "exactly one row per item")
+        self.assertEqual(self._visible_startup_names(), ["alpha", "zeta"])
         self.assertTrue(self.app._startup_count_label.cget("text").startswith("2"))
 
     def test_overwriting_does_not_add_a_duplicate_row(self):
@@ -333,15 +389,11 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.app._refresh_startup_list(force=True)
         self._wait_for(lambda: len(self.app._startup_items_cache) == 1, 2.0)
 
-        self.app._startup_name_entry.delete(0, "end")
-        self.app._startup_name_entry.insert(0, "app")
-        self.app._startup_path_entry.delete(0, "end")
-        self.app._startup_path_entry.insert(0, r"C:\new.exe")
         self.confirm_answer = True
-        self.app._add_startup_item()
-        self._pump(0.3)
-        self.assertEqual(len(self.app._startup_items_cache), 1, "no duplicate entry")
-        self.assertEqual(len(self.app._table_rows), 1, "no duplicate row")
+        self._fill_startup_form("app", r"C:\new.exe")
+        self.assertTrue(self._wait_for(lambda: self.app._startup_table.set("registry:app", "path")
+                                       == r"C:\new.exe"))
+        self.assertEqual(self._visible_startup_names(), ["app"])
         self.assertEqual(self.confirm_calls[0]["body"].count(r"C:\old.exe"), 1,
                          "the prompt must show the command being replaced")
 
@@ -351,10 +403,34 @@ class GuiRegressionTestCase(unittest.TestCase):
             name="b", path=str(self.root / "b.cmd"), source="startup_folder")
         self.app._refresh_startup_list(force=True)
         self._wait_for(lambda: len(self.app._startup_items_cache) == 2, 2.0)
-        self.app._startup_source_filter = "registry"
-        rendered = self.app._sorted_startup_items()
-        self.assertEqual([item.name for item in rendered], ["a"],
+        self.app._on_source_filter_changed(self.app._format_startup_source("registry"))
+        self.assertEqual(self._visible_startup_names(), ["a"],
                          "a HKLM/HKCU filter must not show folder items")
+
+    def test_startup_source_popup_stays_compact_after_refresh(self):
+        self.registry["registry:a"] = sm.StartupItem(name="a", path="a", source="registry")
+        self.registry["startup_folder:b"] = sm.StartupItem(
+            name="b", path=str(self.root / "b.cmd"), source="startup_folder")
+        self.app._refresh_startup_list(force=True)
+        self.assertTrue(self._wait_for(lambda: len(self.app._startup_items_cache) == 2))
+        self.app._nav_buttons["startup"].invoke()
+        self.app.update()
+
+        dropdown = self.app._source_filter_dropdown
+        menu = dropdown._dropdown_menu
+        opened = []
+        self.app.after(100, lambda: opened.append(ctypes.windll.user32.EndMenu()))
+        dropdown._canvas.event_generate("<Button-1>", x=4, y=4)
+        self.assertEqual(opened, [1], "a real native menu must have opened")
+        labels = [menu.entrycget(index, "label") for index in range(menu.index("end") + 1)]
+        self.assertEqual(labels, dropdown.cget("values"), "displayed entries must not be space padded")
+        scale = customtkinter.ScalingTracker.get_widget_scaling(dropdown)
+        self.assertLessEqual(menu.yposition(1) - menu.yposition(0), round(21 * scale))
+
+        label = self.app._format_startup_source("registry")
+        menu.invoke(labels.index(label))
+        self.assertEqual(dropdown.get(), label)
+        self.assertEqual(self._visible_startup_names(), ["a"])
 
     def test_overwrite_prompt_can_be_declined(self):
         self.registry["registry:app"] = sm.StartupItem(
@@ -362,13 +438,9 @@ class GuiRegressionTestCase(unittest.TestCase):
         self.app._refresh_startup_list(force=True)
         self._wait_for(lambda: len(self.app._startup_items_cache) == 1, 2.0)
 
-        self.app._startup_name_entry.delete(0, "end")
-        self.app._startup_name_entry.insert(0, "app")
-        self.app._startup_path_entry.delete(0, "end")
-        self.app._startup_path_entry.insert(0, r"C:\new.exe")
         self.confirm_answer = False
-        self.app._add_startup_item()
-        self._pump(0.2)
+        self._fill_startup_form("app", r"C:\new.exe")
+        self.assertTrue(self._wait_for(lambda: bool(self.confirm_calls)))
         self.assertEqual(len(self.confirm_calls), 1)
         self.assertIn(r"C:\old.exe", self.confirm_calls[0]["body"])
         self.assertEqual(self.registry["registry:app"].path, r"C:\old.exe",
@@ -376,232 +448,167 @@ class GuiRegressionTestCase(unittest.TestCase):
 
     # --- layout: content must fill the window (no blank strip) -------------
 
-    def _frame_span(self) -> tuple:
-        """(relx, relwidth) of the main content frame."""
-        info = self.app._main_frame.place_info()
-        return float(info.get("relx") or 0.0), float(info.get("relwidth") or 1.0)
+    def test_main_window_is_small_with_one_row_of_tabs(self):
+        self.app.update()
+        buttons = []
 
-    def test_main_content_fills_the_window(self):
-        """A stale main-frame width leaves a large empty strip on the right."""
-        def spans_to_edge():
-            self.app.update_idletasks()
-            relx, relwidth = self._frame_span()
-            return relx + relwidth >= 0.995
+        def collect(parent):
+            for child in parent.winfo_children():
+                if child.winfo_ismapped():
+                    if isinstance(child, customtkinter.CTkButton):
+                        buttons.append(child.cget("text"))
+                    collect(child)
 
-        self.assertTrue(self._wait_for(spans_to_edge, 3.0),
-                        f"content does not reach the right edge: {self._frame_span()}")
+        collect(self.app)
+        self.assertNotIn("精简", buttons)
+        width, height = self.app.geometry().split("+", 1)[0].split("x")
+        self.assertLessEqual(int(width), 620)
+        self.assertLessEqual(int(height), 370)
+        tabs = tuple(self.app._nav_buttons.values())
+        self.assertEqual(len({tab.winfo_rooty() for tab in tabs}), 1)
+        self.assertEqual(len({tab.winfo_rootx() for tab in tabs}), 3)
 
-        self.app.geometry("1200x700")
-        self.assertTrue(self._wait_for(spans_to_edge, 3.0),
-                        f"content lost the right edge after growing: {self._frame_span()}")
+    def _visible_startup_names(self):
+        table = self.app._startup_table
+        return [table.set(row, "name") for row in table.get_children()]
 
-        self.app.geometry("880x580")
-        self.assertTrue(self._wait_for(spans_to_edge, 3.0),
-                        f"content lost the right edge after shrinking: {self._frame_span()}")
-
-    def test_main_content_starts_at_the_sidebar(self):
-        relx, _ = self._frame_span()
-        self.assertAlmostEqual(relx, main_module.SIDEBAR_EXPANDED / 880.0, places=2)
-
-    def test_collapsed_sidebar_still_fills_the_window(self):
-        expanded_relx, _ = self._frame_span()
-        self.app._toggle_sidebar()
-        self.assertTrue(self._wait_for(
-            lambda: self._frame_span()[0] < expanded_relx - 0.05, 3.0),
-            "main content should follow the collapsed sidebar")
-        relx, relwidth = self._frame_span()
-        self.assertGreaterEqual(relx + relwidth, 0.995,
-                                "collapsing must not leave a blank strip")
-
-    def test_compact_mode_round_trip_keeps_the_layout(self):
-        """Returning from compact mode must not push the content off the window."""
-        before = self._frame_span()
-
-        self.app._toggle_compact_mode()
-        self.assertTrue(self._wait_for(lambda: self.app._compact_mode, 3.0))
-        self.assertTrue(self._wait_for(
-            lambda: self.app._compact_frame.winfo_ismapped(), 3.0))
-
-        self.app._toggle_compact_mode()
-        self.assertTrue(self._wait_for(lambda: not self.app._compact_mode, 3.0))
-        self.assertTrue(self._wait_for(
-            lambda: not self.app._compact_frame.winfo_ismapped(), 3.0))
-
-        after = self._wait_for(lambda: self._frame_span() == before, 3.0)
-        relx, relwidth = self._frame_span()
-        self.assertTrue(after, f"fractions changed after compact: {before} -> "
-                               f"{(relx, relwidth)}")
-        self.assertGreaterEqual(relx + relwidth, 0.995,
-                                "content no longer reaches the right edge")
-
-        # No stale absolute x may survive alongside the fraction: tkinter gives
-        # the pixel option priority, which is what scrambled the layout.
-        info = self.app._main_frame.place_info()
-        self.assertIn(info.get("x"), (None, "", "0"),
-                      f"stale pixel x in place options: {info}")
-
-    def test_compact_round_trip_with_collapsed_sidebar(self):
-        self.app._toggle_sidebar()
-        self._wait_for(lambda: self._frame_span()[0] < 0.1, 3.0)
-        self.app._toggle_compact_mode()
-        self.assertTrue(self._wait_for(lambda: self.app._compact_mode, 3.0))
-        self.app._toggle_compact_mode()
-        self.assertTrue(self._wait_for(lambda: not self.app._compact_mode, 3.0))
-        relx, relwidth = self._frame_span()
-        self.assertGreaterEqual(relx + relwidth, 0.995,
-                                f"blank strip after round trip: {(relx, relwidth)}")
-        self._wait_for(lambda: self.app._sidebar.winfo_ismapped(), 3.0)
-        self.assertTrue(self.app._sidebar.winfo_ismapped())
-
-    # --- sorting must be reachable by clicking the column header -----------
-
-    def _click_header(self, key: str):
-        """Click a header cell the way the user does (on its click target)."""
-        label = self.app._col_header_widgets[key][0]
-        target = next((child for child in label.winfo_children()
-                       if isinstance(child, tkinter.Canvas)), None)
-        self.assertIsNotNone(target, "the header cell should expose a click target")
-        self.assertTrue(target.bind("<Button-1>"),
-                        f"the '{key}' header has no click binding")
-        # Synthetic events all carry time=0; a real click carries a timestamp, and
-        # the header guard uses it to ignore one click arriving through two
-        # bindings. Distinct timestamps keep consecutive test clicks separate.
-        self._click_clock = getattr(self, "_click_clock", 0) + 500
-        target.event_generate("<Button-1>", x=4, y=4, time=self._click_clock)
+    def _click_header(self, column):
+        table = self.app._startup_table
+        index = main_module.COL_KEYS.index(column)
+        x = sum(table.column(name, "width") for name in main_module.COL_KEYS[:index]) + 14
+        table.event_generate("<ButtonPress-1>", x=x, y=10)
+        table.event_generate("<ButtonRelease-1>", x=x, y=10)
         self.app.update()
 
-    def test_clicking_the_name_header_toggles_the_sort(self):
-        for name in ("beta", "alpha", "gamma"):
-            self.registry[f"registry:{name}"] = sm.StartupItem(
-                name=name, path=rf"C:\{name}.exe", source="registry")
+    def test_clicking_name_header_reverses_visible_rows(self):
+        for name in ("zeta", "alpha", "beta"):
+            item = sm.StartupItem(name=name, path=name, source="registry")
+            self.registry[item.identity()] = item
+        self.app._nav_buttons["startup"].invoke()
         self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 3, 2.0)
-        self.app._sort_key = "name"
-        self.app._sort_ascending = True
-
+        self.assertTrue(self._wait_for(
+            lambda: self._visible_startup_names() == ["alpha", "beta", "zeta"]))
         self._click_header("name")
-        self.assertFalse(self.app._sort_ascending,
-                         "clicking the Name header should flip the sort direction")
-        self.assertEqual([item.name for item in self.app._sorted_startup_items()],
-                         ["gamma", "beta", "alpha"])
-
-        self._click_header("name")
-        self.assertTrue(self.app._sort_ascending)
-        self.assertEqual([item.name for item in self.app._sorted_startup_items()],
-                         ["alpha", "beta", "gamma"])
-
-    def test_clicking_the_source_header_switches_the_sort_key(self):
-        self.app._sort_key = "name"
+        self.assertEqual(self._visible_startup_names(), ["zeta", "beta", "alpha"])
+        self.assertIn("↓", self.app._startup_table.heading("name", "text"))
         self._click_header("source")
-        self.assertEqual(self.app._sort_key, "source")
+        self.assertIn("↑", self.app._startup_table.heading("source", "text"))
 
-    def test_header_shows_the_sort_direction(self):
-        self.app._sort_key = "name"
-        self.app._sort_ascending = True
-        self.app._update_sort_indicator()
-        self.app.update_idletasks()
-        ascending = self.app._col_header_widgets["name"][0].cget("text")
-        self.app._toggle_sort("name")
-        self.app.update_idletasks()
-        descending = self.app._col_header_widgets["name"][0].cget("text")
-        self.assertNotEqual(ascending, descending,
-                            "the header must show which direction is active")
-        self.assertTrue(descending.endswith("↓") or descending.endswith("↑"))
-
-    def test_source_column_shows_the_short_tag(self):
-        self.registry["registry_hklm"] = sm.StartupItem(name="a", path=r"C:\a.exe",
-                                                        source="registry_hklm")
+    def test_tab_round_trip_preserves_window_filter_and_selection(self):
+        for name in ("alpha", "beta"):
+            item = sm.StartupItem(name=name, path=name, source="registry")
+            self.registry[item.identity()] = item
+        self.app._nav_buttons["startup"].invoke()
         self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        self.app.update_idletasks()
-        widgets = self.app._row_widgets[id(self.app._table_rows[0])]
-        self.assertEqual(widgets["source"].cget("text"), "HKLM",
-                         "the cell must use the short source tag, not a clipped label")
-        self.assertEqual(self.app._format_startup_source("registry_hklm"), "全局 Run")
+        self.assertTrue(self._wait_for(lambda: self._visible_startup_names() == ["alpha", "beta"]))
+        self.app._startup_query.set("bet")
+        self.assertTrue(self._wait_for(lambda: self._visible_startup_names() == ["beta"]))
+        self.app._startup_table.selection_set("registry:beta")
+        geometry = self.app.geometry()
+        self.app._nav_buttons["settings"].invoke()
+        self.assertTrue(self._wait_for(lambda: self.app._style_dropdown.winfo_ismapped()))
+        self.app._nav_buttons["startup"].invoke()
+        self.assertTrue(self._wait_for(lambda: self.app._startup_table.winfo_ismapped()))
+        self.assertEqual(self.app.geometry(), geometry)
+        self.assertEqual(self._visible_startup_names(), ["beta"])
+        self.assertEqual(self.app._startup_table.selection(), ("registry:beta",))
 
-    def test_row_cells_stay_inside_the_card(self):
-        self.registry["registry:a"] = sm.StartupItem(name="a", path=r"C:\a.exe",
-                                                     source="registry")
-        self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        self.app.update_idletasks()
-        row = self.app._table_rows[0]
-        widgets = self.app._row_widgets[id(row)]
-        row_width = row.winfo_width()
-        self.assertGreater(row_width, 100, "the row must have a real width")
-        for key in ("name", "path", "source", "open", "remove"):
-            widget = widgets[key]
-            right = widget.winfo_x() + widget.winfo_width()
-            self.assertLessEqual(right, row_width + 2,
-                                 f"{key} extends past the row ({right} > {row_width})")
+    def test_page_controls_fit_at_minimum_window_size(self):
+        width, height = main_module.FULL_MIN_SIZE
+        self.assertLessEqual(width, 550)
+        self.assertLessEqual(height, 340)
+        self.app.geometry(f"{width}x{height}")
+        controls = {
+            "power": (self.app._check_btn, self.app._power_refresh_btn,
+                      self.app._power_switch_btn, self.app._create_schemes_btn,
+                      self.app._target_dropdown, self.app._apply_interval_btn),
+            "startup": (self.app._startup_refresh_btn, self.app._startup_restore_btn,
+                        self.app._startup_add_toggle, self.app._startup_table,
+                        self.app._startup_delete_btn, self.app._startup_open_btn),
+            "settings": (self.app._style_dropdown, self.app._startup_self_btn),
+        }
+        for key, widgets in controls.items():
+            self.app._nav_buttons[key].invoke()
+            self.app.update()
+            page = self.app._pages[key]
+            self.assertGreaterEqual(page.winfo_width(), 400)
+            for widget in widgets:
+                self._assert_inside_page(widget, page)
 
-    # --- compactness: no row may overflow its card -------------------------
+    def _assert_inside_page(self, widget, page):
+        self.assertTrue(widget.winfo_ismapped(), widget)
+        self.assertGreaterEqual(widget.winfo_rootx(), page.winfo_rootx(), widget)
+        self.assertGreaterEqual(widget.winfo_rooty(), page.winfo_rooty(), widget)
+        self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(),
+                             page.winfo_rootx() + page.winfo_width(), widget)
+        self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
+                             page.winfo_rooty() + page.winfo_height(), widget)
 
-    def _overflow(self, row) -> int:
-        children = [kid for kid in row.winfo_children() if kid.winfo_ismapped()]
-        if not children:
-            return 0
-        right = max(kid.winfo_x() + kid.winfo_width() for kid in children)
-        return right - row.winfo_width()
+    def test_add_form_only_uses_table_space_when_expanded(self):
+        width, height = main_module.FULL_MIN_SIZE
+        self.app.geometry(f"{width}x{height}")
+        self.app._nav_buttons["startup"].invoke()
+        self.app.update()
+        table = self.app._startup_table
+        full_height = table.winfo_height()
+        self.assertFalse(self.app._startup_name_entry.winfo_ismapped())
+        self.app._startup_add_toggle.invoke()
+        self.app.update()
+        for widget in (self.app._startup_name_entry, self.app._startup_path_entry,
+                       self.app._startup_browse_btn, self.app._startup_add_btn, table):
+            self._assert_inside_page(widget, self.app._pages["startup"])
+        self.assertLess(table.winfo_height(), full_height)
+        self.app._startup_add_toggle.invoke()
+        self.app.update()
+        self.assertEqual(table.winfo_height(), full_height)
+        self.assertFalse(self.app._startup_name_entry.winfo_ismapped())
 
-    def _card_rows_fit(self) -> str:
-        """Empty string when every row of both cards fits."""
-        self.app.update_idletasks()
-        for card_name in ("_power_card", "_startup_card"):
-            card = getattr(self.app, card_name)
-            for index, row in enumerate(card.winfo_children()):
-                if row is getattr(self.app, "_startup_list_frame", None):
-                    continue
-                overflow = self._overflow(row)
-                if overflow > 2:
-                    return f"{card_name} row{index} overflows by {overflow}px"
-        return ""
-
-    def test_cards_do_not_overflow_at_any_width(self):
-        for size in ("880x580", "620x420", "1200x760"):
-            self.app.geometry(size)
-            self._wait_for(lambda: self._card_rows_fit() == "", 2.5)
-            self.assertEqual(self._card_rows_fit(), "",
-                             f"layout overflows at {size}")
-
-    def test_title_row_shows_the_check_result_inline(self):
-        self.app._show_check_result("hello state", "ok", persistent=True)
-        self.app.update_idletasks()
-        self.assertIn("hello state", self.app._check_result_label.cget("text"))
-        # The result shares the title row: the power card must stay compact.
-        rows = [row for row in self.app._power_card.winfo_children()]
-        self.assertLessEqual(len(rows), 2,
-                             "the power card should keep at most two rows")
-
-    def test_long_messages_are_trimmed(self):
-        self.app._show_check_result("x" * 400, "error", persistent=True)
-        self.app.update_idletasks()
-        text = self.app._check_result_label.cget("text")
-        self.assertLessEqual(len(text), 111, "a long message must be trimmed")
+    def test_long_status_fits_in_the_tab_row_and_offers_details(self):
+        self.app._nav_buttons["settings"].invoke()
+        message = "x" * 400
+        self.app._show_check_result(message, "error", persistent=True)
+        self.app.update()
+        label = self.app._check_result_label
+        text = label.cget("text")
+        self.assertTrue(label.winfo_ismapped())
         self.assertTrue(text.endswith("…"))
-        self.assertEqual(self._card_rows_fit(), "",
-                         "a long message must not overflow the title row")
+        self.assertLess(len(text), 400)
+        self.assertTrue(self.app._status_details_btn.winfo_ismapped())
 
-    def test_status_bar_only_takes_space_while_showing(self):
-        self.app._clear_status_bar()
-        self.app.update_idletasks()
-        self.assertFalse(self.app._status_bar.winfo_ismapped(),
-                         "an empty status strip must not occupy space")
-        self.app._show_check_result("transient note", "info")
-        self.app.update_idletasks()
-        self.assertTrue(self.app._status_bar.winfo_ismapped())
-        self.app._clear_status_bar()
-        self.app.update_idletasks()
-        self.assertFalse(self.app._status_bar.winfo_ismapped())
+        def verify_dialog(window):
+            try:
+                self.assertTrue(self._wait_for(window.winfo_viewable))
+                body = next(child for child in window.winfo_children()
+                            if isinstance(child, customtkinter.CTkTextbox))
+                self.assertEqual(body.get("1.0", "end-1c"), message)
+                close = next(child for child in window.winfo_children()
+                             if isinstance(child, customtkinter.CTkButton)
+                             and child.cget("text") == "关闭")
+                self._assert_inside_page(close, window)
+                close.invoke()
+                self.assertFalse(window.winfo_exists())
+            finally:
+                if window.winfo_exists():
+                    self.app._close_modal(window, None)
 
-    def test_hovering_a_row_does_not_create_a_floating_window(self):
-        self.registry["registry:a"] = sm.StartupItem(name="a", path=r"C:\a.exe", source="registry")
+        with mock.patch.object(self.app, "wait_window", side_effect=verify_dialog):
+            self.app._status_details_btn.invoke()
+
+    def test_selected_row_actions_point_to_the_exact_entry(self):
+        item = sm.StartupItem(name="demo", path=r"C:\demo.cmd", source="startup_folder")
+        self.registry[item.identity()] = item
+        self.app._nav_buttons["startup"].invoke()
         self.app._refresh_startup_list(force=True)
-        self._wait_for(lambda: len(self.app._table_rows) == 1, 2.0)
-        self.app._table_rows[0].event_generate("<Enter>")
-        self._pump(0.2)
-        self.assertFalse(any(isinstance(w, customtkinter.CTkToplevel)
-                             for w in self.app.winfo_children()))
+        self.assertTrue(self._wait_for(lambda: self._visible_startup_names() == ["demo"]))
+        table = self.app._startup_table
+        self.assertEqual(table.set(item.identity(), "source"), "启动夹")
+        self.assertEqual(self.app._startup_delete_btn.cget("state"), "disabled")
+        table.selection_set(item.identity())
+        self.assertTrue(self._wait_for(lambda: self.app._startup_delete_btn.cget("state") == "normal"))
+        self.confirm_answer = False
+        self.app._startup_delete_btn.invoke()
+        self.assertIn(r"C:\demo.cmd", self.confirm_calls[0]["body"])
+        self.assertIn(item.identity(), self.registry)
 
     # --- P2.8: no Tk errors after close -----------------------------------
 
@@ -613,8 +620,7 @@ class GuiRegressionTestCase(unittest.TestCase):
         with mock.patch.object(main_module, "get_power_snapshot", side_effect=slow_snapshot):
             self.app._refresh_power_status()
             time.sleep(0.05)
-            self.app._closing = True
-            self.app.destroy()
+            self._destroy_app()
             time.sleep(0.5)  # the worker finishes after the window is gone
         self.assertTrue(True, "no exception escaped the background query")
 

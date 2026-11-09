@@ -7,6 +7,8 @@ __pycache__/
 build/
 
 # Runtime data produced next to the app (portable install)
+/config.json
+/dist/config.json
 pc_auto_scripts.log
 pc_auto_scripts.log.*
 startup_backups/

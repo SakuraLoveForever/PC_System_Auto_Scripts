@@ -679,8 +679,8 @@ class SwitchResult:
     """Outcome of an attempt to activate a power scheme."""
 
     ok: bool
-    method: str = ""            # "api" | "powercfg" | ""
-    error: str = ""             # "", "not_supported", "permission", "unavailable", "error"
+    method: str = ""            # "api", "powercfg", or "already_active"
+    error: str = ""
     detail: str = ""
 
     @property
@@ -716,26 +716,31 @@ def _attempt_api_switch(guid_str: str) -> SwitchResult:
 
 
 def set_active_plan(guid_str: str) -> bool:
-    """Activate a power plan. Returns True only when the plan really changed."""
+    """Activate a power plan and verify the requested GUID is active."""
     return switch_active_plan(guid_str).ok
 
 
-def switch_active_plan(guid_str: str) -> SwitchResult:
+def switch_active_plan(guid_str: str, *,
+                       can_activate: Optional[Callable[[], bool]] = None) -> SwitchResult:
     """Activate a power plan and report exactly what happened.
 
     The Win32 API is tried first and ``powercfg`` second. Success is VERIFIED by
-    re-reading the active scheme: on machines with a shadowed built-in template
-    the API can report success while the running scheme does not change.
+    re-reading the active GUID. The monitor may invalidate a pending activation
+    while a read or the previous activation attempt is still in progress.
     """
     before = active_plan_guid()
     wanted = (guid_str or "").lower()
+    if can_activate is not None and not can_activate():
+        return SwitchResult(False, error="cancelled")
     if before and wanted and before.lower() == wanted:
         return SwitchResult(True, "already_active")
 
     api_result = _attempt_api_switch(guid_str)
-    if api_result.ok and _active_guid_changed(before, wanted):
+    if api_result.ok and _active_guid_matches(wanted):
         return api_result
 
+    if can_activate is not None and not can_activate():
+        return SwitchResult(False, error="cancelled")
     cmd_result = SwitchResult(False, "powercfg")
     try:
         returncode, output = _run_powercfg_raw(["/setactive", guid_str])
@@ -747,25 +752,21 @@ def switch_active_plan(guid_str: str) -> SwitchResult:
     except PowercfgError as exc:
         cmd_result = SwitchResult(False, "powercfg", exc.kind, exc.detail)
 
-    if cmd_result.ok and _active_guid_changed(before, wanted):
+    if cmd_result.ok and _active_guid_matches(wanted):
         return cmd_result
 
-    # Nothing changed: report the most informative failure available.
+    # The requested plan is unverified: report the most informative failure.
     if cmd_result.error:
         return cmd_result
     if api_result.error:
         return api_result
     return SwitchResult(False, cmd_result.method or api_result.method, "error",
-                        "the active scheme did not change")
+                        "the requested scheme did not become active")
 
 
-def _active_guid_changed(before: Optional[str], wanted: str) -> bool:
+def _active_guid_matches(wanted: str) -> bool:
     now = active_plan_guid()
-    if now is None:
-        return False                    # cannot verify — treat as "no change"
-    if wanted and now.lower() == wanted:
-        return True
-    return before is not None and now.lower() != before.lower()
+    return bool(now and now.lower() == wanted)
 
 
 # ---------------------------------------------------------------------------
@@ -826,15 +827,11 @@ class PowerMonitor:
     """Monitors power plan on a background thread and auto-corrects if needed.
 
     Guarantees:
-    * at most one worker thread is ever doing work at a time;
-    * ``stop()`` interrupts the worker's sleep immediately and returns without
-      blocking the GUI thread for long;
-    * a manual ``check_now()`` never runs concurrently with a scheduled check;
-    * unexpected exceptions are reported through ``on_status_change`` and the
-      monitor reports itself as stopped instead of pretending to run.
+    * restarting reuses the worker if it is still finishing a check;
+    * ``stop()`` interrupts the wait without joining the worker on the GUI thread;
+    * scheduled checks and user-triggered checks/switches share one operation lock;
+    * results and pending writes from a superseded check are discarded.
     """
-
-    _JOIN_TIMEOUT = 2.0
 
     def __init__(self, on_status_change: Optional[Callable] = None,
                  interval_seconds: int = 60,
@@ -843,13 +840,11 @@ class PowerMonitor:
         self.interval = interval_seconds
         self._target_guid: Optional[str] = None
         self._lock = threading.RLock()
+        self._wake = threading.Condition(self._lock)
         self._check_lock = threading.Lock()
-        self._stop_event = threading.Event()
-        self._stop_event.set()
         self._thread: Optional[threading.Thread] = None
-        self._pending_start = False
-        # Sessions start at 1 so that "no session yet" is never a valid session.
-        self._session = 1
+        self._enabled = False
+        self._revision = 0
         self._on_status_change = on_status_change
         self._on_monitor_state_change = on_monitor_state_change
         self._last_status: Optional[str] = None
@@ -879,16 +874,23 @@ class PowerMonitor:
     @target_guid.setter
     def target_guid(self, guid: Optional[str]) -> None:
         with self._lock:
-            self._target_guid = guid or None
+            target = guid or None
+            if self._target_guid != target:
+                self._target_guid = target
+                self._revision += 1
+                self._last_status = None
+
+    @property
+    def revision(self) -> int:
+        """Changes when the monitoring session or its target is superseded."""
+        with self._lock:
+            return self._revision
 
     @property
     def running(self) -> bool:
-        """True when a worker is doing work right now."""
+        """True while scheduled monitoring is enabled."""
         with self._lock:
-            if self._pending_start:
-                return True
-            thread = self._thread
-        return thread is not None and thread.is_alive() and not self._stop_event.is_set()
+            return self._enabled
 
     @property
     def worker_thread(self) -> Optional[threading.Thread]:
@@ -898,29 +900,32 @@ class PowerMonitor:
     # -- lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        with self._lock:
-            if self._pending_start or (self._thread is not None and self._thread.is_alive()
-                                       and not self._stop_event.is_set()):
+        with self._wake:
+            if self._enabled:
                 return
-            self._pending_start = True
-            self._stop_event.clear()
-            self._session += 1
-            session = self._session
-            self._thread = threading.Thread(
-                target=self._worker_entry, args=(session,), name="PowerMonitor", daemon=True)
-            self._thread.start()
+            self._enabled = True
+            self._revision += 1
+            self._last_status = None
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._worker_entry, name="PowerMonitor", daemon=True)
+                try:
+                    self._thread.start()
+                except RuntimeError:
+                    self._enabled = False
+                    self._thread = None
+                    raise
+            self._wake.notify()
+            self._emit_state(True)
 
     def stop(self) -> None:
-        """Request stop. Returns promptly; the worker exits on its own."""
-        with self._lock:
-            self._pending_start = False
-            self._session += 1  # invalidate any in-flight startup
-            self._stop_event.set()
-            thread = self._thread
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            # The worker wakes from Event.wait() immediately; if it is inside a
-            # powercfg call we do not hold the GUI hostage waiting for it.
-            thread.join(timeout=0.2)
+        """Stop monitoring and invalidate pending power writes."""
+        with self._wake:
+            self._revision += 1
+            if self._enabled:
+                self._enabled = False
+                self._wake.notify()
+                self._emit_state(False)
 
     def wait_until_stopped(self, timeout: float = 5.0) -> bool:
         """Block until no worker is alive. Used on exit and by tests."""
@@ -933,64 +938,38 @@ class PowerMonitor:
         thread.join(timeout=timeout)
         return not thread.is_alive()
 
-    def _is_current_session(self, session: int) -> bool:
-        with self._lock:
-            return session == self._session
-
-    def _worker_entry(self, session: int) -> None:
+    def _worker_entry(self) -> None:
         try:
-            # A previous worker may still be finishing a powercfg call. Wait for
-            # it before doing any work so two workers never overlap.
-            with self._lock:
-                previous = self._thread
-            if previous is not None and previous is not threading.current_thread():
-                previous.join(timeout=self._JOIN_TIMEOUT)
-                if previous.is_alive():
-                    # Could not take over cleanly; report stopped and back off.
-                    log.warning("previous power monitor worker did not exit; not starting a new one")
-                    with self._lock:
-                        self._pending_start = False
-                        self._thread = previous
-                    if self._is_current_session(session):
-                        self._emit_state(False)
-                    return
-
-            if self._stop_event.is_set() or not self._is_current_session(session):
-                with self._lock:
-                    self._pending_start = False
-                    stale = self._thread is not threading.current_thread()
-                if stale:
-                    # A newer start/stop already owns the monitor state.
-                    return
-                self._emit_state(False)
-                return
-
-            with self._lock:
-                self._pending_start = False
-            self._emit_state(True)
-            self._loop()
+            while True:
+                with self._wake:
+                    if not self._enabled:
+                        # Release ownership under the same lock start() uses.
+                        self._thread = None
+                        return
+                    revision = self._revision
+                with self._check_lock:
+                    try:
+                        self._check_and_fix(revision)
+                    except Exception as exc:
+                        log.exception("power monitor check failed")
+                        with self._lock:
+                            if revision == self._revision:
+                                self._emit({
+                                    "status": "error",
+                                    "plan_name": "",
+                                    "fixed": False,
+                                    "message": str(exc),
+                                })
+                with self._wake:
+                    self._wake.wait_for(lambda: revision != self._revision,
+                                        timeout=self._interval)
         finally:
             with self._lock:
-                self._pending_start = False
-                stopping = self._thread is threading.current_thread()
-            if stopping:
-                self._emit_state(False)
-
-    def _loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                self._check_and_fix()
-            except Exception as exc:  # never let the worker die silently
-                log.exception("power monitor check failed")
-                self._emit({
-                    "status": "error",
-                    "plan_name": "",
-                    "fixed": False,
-                    "message": str(exc),
-                })
-            # Interruptible wait — stop() takes effect immediately.
-            if self._stop_event.wait(self._interval):
-                break
+                if self._thread is threading.current_thread():
+                    self._thread = None
+                    self._enabled = False
+                    self._revision += 1
+                    self._emit_state(False)
 
     def _emit(self, result: dict) -> None:
         if self._on_status_change is None:
@@ -1015,18 +994,31 @@ class PowerMonitor:
         if not self._check_lock.acquire(blocking=False):
             return {"status": "busy", "plan_name": "", "fixed": False}
         try:
-            return self._check_and_fix()
+            result = self._check_and_fix(self.revision)
+            if result is None:
+                return {"status": "cancelled", "plan_name": "", "fixed": False}
+            return result
         finally:
             self._check_lock.release()
 
-    def _resolve_targets(self, plans: Sequence[PowerPlan]) -> List[PowerPlan]:
+    def switch_now(self, guid: str) -> SwitchResult:
+        """Activate a user-selected scheme, or report that a check is busy."""
+        if not self._check_lock.acquire(blocking=False):
+            return SwitchResult(False, error="busy")
+        try:
+            revision = self.revision
+            return switch_active_plan(guid, can_activate=lambda: revision == self.revision)
+        finally:
+            self._check_lock.release()
+
+    def _resolve_targets(self, plans: Sequence[PowerPlan],
+                         target_guid: Optional[str]) -> List[PowerPlan]:
         """Plans to try, best first.
 
         An explicit target is used as long as it exists and is not known to be
         unactivatable; otherwise the best usable plan is substituted so a single
         dead target can never make every switch fail.
         """
-        target_guid = self.target_guid
         if target_guid:
             plan = find_plan_by_guid(target_guid, plans)
             if plan is None:
@@ -1072,8 +1064,15 @@ class PowerMonitor:
                     ordered.append(plan)
         return ordered
 
-    def _check_and_fix(self) -> dict:
+    def _check_and_fix(self, revision: int) -> Optional[dict]:
+        with self._lock:
+            if revision != self._revision:
+                return None
+            target_guid = self._target_guid
+
         snapshot = get_power_snapshot()
+        if revision != self.revision:
+            return None
         plans = snapshot.plans
         active = snapshot.active
 
@@ -1085,34 +1084,38 @@ class PowerMonitor:
                 "error": snapshot.error or "no_active_plan",
                 "error_detail": snapshot.error_detail,
             }
-        elif is_plan_matching_target(active, self.target_guid, plans):
+        elif is_plan_matching_target(active, target_guid, plans):
             result = {"status": "ok", "plan_name": active.name, "fixed": False}
         else:
-            targets = self._resolve_targets(plans)
+            targets = self._resolve_targets(plans, target_guid)
             if not targets:
                 # Distinguish "configured target vanished" from "no candidate".
-                status = "target_missing" if self.target_guid else "no_target"
+                status = "target_missing" if target_guid else "no_target"
                 result = {
                     "status": status,
                     "plan_name": active.name,
                     "fixed": False,
-                    "target_guid": self.target_guid or "",
+                    "target_guid": target_guid or "",
                 }
             else:
-                result = self._try_targets(active, targets)
+                result = self._try_targets(active, targets, target_guid, revision)
+                if result is None:
+                    return None
 
         status = result["status"]
-        if status == "busy":
-            return result
         new_status = (f"{status}:{result.get('plan_name', '')}:{result.get('target_guid', '')}"
                       f":{'|'.join(result.get('skipped', []))}")
-        if new_status != self._last_status:
-            self._last_status = new_status
-            self._emit(result)
+        with self._lock:
+            if revision != self._revision:
+                return None
+            if new_status != self._last_status:
+                self._last_status = new_status
+                self._emit(result)
 
         return result
 
-    def _try_targets(self, active: PowerPlan, targets: Sequence[PowerPlan]) -> dict:
+    def _try_targets(self, active: PowerPlan, targets: Sequence[PowerPlan],
+                     target_guid: Optional[str], revision: int) -> Optional[dict]:
         """Switch to the best usable target, remembering plans Windows rejects.
 
         A configured-but-dead target is reported *and* skipped, so one click both
@@ -1123,57 +1126,49 @@ class PowerMonitor:
         switched_to: Optional[PowerPlan] = None
         last_error = ""
 
+        def can_activate() -> bool:
+            return revision == self.revision
+
         for target in targets:
-            outcome = switch_active_plan(target.guid)
-            if outcome.ok:
-                switched_to = target
-                break
-            last_error = outcome.error
-            if not (outcome.unsupported or outcome.error == "permission"):
-                break
-            # This plan cannot be activated: remember it and try the next one.
-            mark_target_unsupported(target.guid)
-            rejected.append(f"{target.name} ({outcome.error})")
-            if dead_configured is None and self._is_configured_target(target):
-                dead_configured = target
+            if not can_activate():
+                return None
+            outcome = switch_active_plan(target.guid, can_activate=can_activate)
+            with self._lock:
+                if revision != self._revision or outcome.error == "cancelled":
+                    return None
+                if outcome.ok:
+                    switched_to = target
+                    break
+                last_error = outcome.error
+                if not (outcome.unsupported or outcome.error == "permission"):
+                    break
+                # This plan cannot be activated: remember it and try the next one.
+                mark_target_unsupported(target.guid)
+                rejected.append(f"{target.name} ({outcome.error})")
+                if target_guid and target_guid.lower() == target.guid.lower():
+                    dead_configured = target
 
         if dead_configured is not None:
-            # The fallback switch still counts as progress, so report the dead
-            # target on its own key without re-notifying on every later check.
-            if dead_configured.guid.lower() not in self._reported_blocked:
-                self._reported_blocked.add(dead_configured.guid.lower())
-                self._last_status = f"target_blocked:{dead_configured.guid.lower()}"
-                self._emit({
-                    "status": "target_blocked",
-                    "plan_name": active.name,
-                    "target_name": dead_configured.name,
-                    "target_guid": dead_configured.guid,
-                    "error": last_error,
-                    "fixed": switched_to is not None,
-                })
-            if switched_to is not None:
-                # The dead target has been reported; let the normal status flow
-                # continue so the successful switch is reported as well.
-                self._last_status = (f"target_blocked:{dead_configured.guid.lower()}"
-                                     f":switched:{switched_to.guid.lower()}")
-                return {
-                    "status": "fixed",
-                    "plan_name": active.name,
-                    "target_name": switched_to.name,
-                    "target_guid": switched_to.guid,
-                    "fixed": True,
-                    "skipped": list(rejected),
-                }
-            return {
+            blocked = {
                 "status": "target_blocked",
                 "plan_name": active.name,
                 "target_name": dead_configured.name,
                 "target_guid": dead_configured.guid,
-                "fixed": False,
+                "fixed": switched_to is not None,
                 "error": last_error,
                 "next_target_name": switched_to.name if switched_to else "",
                 "skipped": list(rejected),
             }
+            with self._lock:
+                if revision != self._revision:
+                    return None
+                guid_key = dead_configured.guid.lower()
+                if guid_key not in self._reported_blocked:
+                    self._reported_blocked.add(guid_key)
+                    if switched_to is not None:
+                        self._emit(blocked)
+            if switched_to is None:
+                return blocked
         if switched_to is not None:
             return {
                 "status": "fixed",
@@ -1192,9 +1187,6 @@ class PowerMonitor:
             "error": last_error,
             "skipped": list(rejected),
         }
-
-    def _is_configured_target(self, plan: PowerPlan) -> bool:
-        return bool(self.target_guid) and (self.target_guid or "").lower() == plan.guid.lower()
 
     def _is_plan_ok(self, active: PowerPlan) -> bool:
         return is_plan_matching_target(active, self.target_guid, [active])
