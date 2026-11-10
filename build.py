@@ -13,6 +13,7 @@ user's configuration or a pending "restore" backup.
 """
 
 import argparse
+import ctypes
 import os
 import shutil
 import subprocess
@@ -102,10 +103,13 @@ def main() -> None:
 
     exe = DIST_DIR / f"{NAME}.exe"
     if os.name == "nt":
-        # A workspace can be low-integrity. Only the locally built release
-        # executable should use the normal desktop integrity level.
-        subprocess.run(["icacls", str(exe), "/setintegritylevel", "M"],
-                       check=True, capture_output=True, text=True)
+        # Clear the EXE's file label so it runs at the caller's integrity level.
+        SE_FILE_OBJECT = 1
+        LABEL_SECURITY_INFORMATION = 0x10
+        error = ctypes.windll.advapi32.SetNamedSecurityInfoW(
+            str(exe), SE_FILE_OBJECT, LABEL_SECURITY_INFORMATION, None, None, None, None)
+        if error:
+            raise ctypes.WinError(error)
     print(f"\nBuild successful: {exe}")
     print("Keep the _internal directory beside the executable.")
     print("Runtime data stays beside the exe: config.json, startup_backups/, "

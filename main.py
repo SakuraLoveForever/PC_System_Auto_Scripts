@@ -2422,32 +2422,85 @@ class App(ctk.CTk):
     # System tray
     # ==================================================================
 
-    def _setup_tray(self):
-        if self._tray_icon is not None:
-            return True
+    def _setup_tray(self) -> bool:
+        if self._tray_thread is not None and self._tray_thread.is_alive():
+            return self._tray_icon is not None and self._tray_icon.registered
+        self._tray_icon = None
+        ready = threading.Event()
+        decided = threading.Event()
+        accepted = False
         try:
-            import pystray
-            icon_img = self._tray_icon_image()
+            from pystray._win32 import Icon, win32
 
-            def on_show(icon, item):
-                self._window_visible = True
-                self._post_ui(self.deiconify)
+            class TrayIcon(Icon):
+                # pystray 0.19.5 discards the native result and uses uID=0.
+                registered = False
+                _icon_handle = None  # The backend destructor also runs after constructor failure.
+                _menu_handle = None  # Message-loop cleanup can run before the menu is built.
 
-            def on_exit(icon, item):
-                self._closing = True
-                icon.stop()
-                self._post_ui(self._force_quit)
+                def _message(self, code, flags, **data):
+                    ok = win32.Shell_NotifyIcon(code, win32.NOTIFYICONDATAW(
+                        cbSize=ctypes.sizeof(win32.NOTIFYICONDATAW),
+                        hWnd=self._hwnd, uID=0, uFlags=flags, **data))
+                    if code == win32.NIM_ADD:
+                        self.registered = bool(ok)
+                        if not ok:
+                            log.warning("tray registration rejected by Windows (Shell_NotifyIconW NIM_ADD)")
 
-            self._tray_icon = pystray.Icon(
-                "pc_auto_scripts_rem", icon_img, "PC 系统自动脚本")
-            self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
+                def _mark_ready(self):
+                    try:
+                        if not decided.is_set():
+                            self.update_menu()
+                            self.visible = True
+                    except Exception:
+                        log.exception("tray registration failed")
+                    finally:
+                        ready.set()
+                    decided.wait()
+                    if not accepted:
+                        win32.PostQuitMessage(0)
+
+                def stop(self):
+                    self._stop()
+
+            image = self._tray_icon_image()
+            menu = self._tray_menu()
+            icon = None
+
+            def run_tray():
+                nonlocal icon
+                try:
+                    icon = TrayIcon("pc_auto_scripts_rem", image, "PC 系统自动脚本", menu=menu)
+                    # Register on the Windows event loop thread. Icon.run starts
+                    # a second setup thread that can be stranded before readiness.
+                    icon._run()
+                except Exception:
+                    log.exception("tray backend failed")
+                    if icon is not None and not ready.is_set():
+                        # The backend's message loop has not taken ownership yet.
+                        for hwnd in (icon._hwnd, icon._menu_hwnd):
+                            if hwnd:
+                                icon._HWND_TO_ICON.pop(hwnd, None)
+                                win32.DestroyWindow(hwnd)
+                        icon._unregister_class(icon._atom)
+                finally:
+                    ready.set()
+                    if icon is not None:
+                        icon._release_icon()
+
+            self._tray_thread = threading.Thread(target=run_tray, daemon=True)
             self._tray_thread.start()
-
-            self._rebuild_tray_menu()
-            return True
+            if not ready.wait(timeout=1.0):
+                log.warning("timed out waiting for Windows tray registration")
+            elif icon is not None and icon.registered:
+                self._tray_icon = icon
+                accepted = True
+            return accepted
         except Exception:
             log.exception("tray setup failed")
             return False
+        finally:
+            decided.set()
 
     def _tray_switch_plan(self, guid: str):
         """Tray plan handlers carry the GUID, so same-named plans stay distinct."""
@@ -2460,53 +2513,50 @@ class App(ctk.CTk):
 
     def _rebuild_tray_menu(self, plans=None):
         """Rebuild the tray menu to reflect current power plan state."""
-        if self._tray_icon is None:
-            return
-        try:
-            import pystray
+        if self._tray_icon is not None:
+            try:
+                self._tray_icon.menu = self._tray_menu(plans)
+            except Exception:
+                log.exception("tray menu rebuild failed")
 
-            def on_show(icon, item):
-                self._window_visible = True
-                self._post_ui(self.deiconify)
+    def _tray_menu(self, plans=None):
+        import pystray
 
-            def on_exit(icon, item):
-                self._closing = True
-                icon.stop()
-                self._post_ui(self._force_quit)
+        def on_show(icon, item):
+            self._post_ui(self.deiconify)
 
-            if plans is None:
-                plans = self._power_plans_cache
-            plan_items = []
-            name_counts: Dict[str, int] = {}
-            for plan in plans:
-                key = plan.name.strip().lower()
-                name_counts[key] = name_counts.get(key, 0) + 1
-            for plan in plans:
-                label = plan.name
-                if name_counts.get(plan.name.strip().lower(), 0) > 1:
-                    label = f"{label} ({plan.guid[:8].upper()})"
-                label += "  ✓" if plan.is_active else ""
-                plan_items.append(
-                    pystray.MenuItem(label, self._tray_switch_plan(plan.guid)))
-            if not plan_items:
-                plan_items.append(
-                    pystray.MenuItem(self._i18n.t("power.unable_detect"),
-                                     lambda: None, enabled=False))
+        def on_exit(icon, item):
+            self._post_ui(self._force_quit)
 
-            menu = pystray.Menu(
-                pystray.MenuItem(self._i18n.t("tray.show"), on_show, default=True),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem(self._i18n.t("power.title"),
-                                 pystray.Menu(*plan_items)),
-                pystray.MenuItem(self._i18n.t("tray.check"),
-                                 lambda: self._post_ui(self._check_now)),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem(self._i18n.t("tray.exit"), on_exit),
-            )
-            self._tray_icon.menu = menu
-            self._tray_icon.update_menu()
-        except Exception:
-            log.exception("tray menu rebuild failed")
+        if plans is None:
+            plans = self._power_plans_cache
+        plan_items = []
+        name_counts: Dict[str, int] = {}
+        for plan in plans:
+            key = plan.name.strip().lower()
+            name_counts[key] = name_counts.get(key, 0) + 1
+        for plan in plans:
+            label = plan.name
+            if name_counts.get(plan.name.strip().lower(), 0) > 1:
+                label = f"{label} ({plan.guid[:8].upper()})"
+            label += "  ✓" if plan.is_active else ""
+            plan_items.append(
+                pystray.MenuItem(label, self._tray_switch_plan(plan.guid)))
+        if not plan_items:
+            plan_items.append(
+                pystray.MenuItem(self._i18n.t("power.unable_detect"),
+                                 lambda: None, enabled=False))
+
+        return pystray.Menu(
+            pystray.MenuItem(self._i18n.t("tray.show"), on_show, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(self._i18n.t("power.title"),
+                             pystray.Menu(*plan_items)),
+            pystray.MenuItem(self._i18n.t("tray.check"),
+                             lambda: self._post_ui(self._check_now)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(self._i18n.t("tray.exit"), on_exit),
+        )
 
     def _tray_icon_image(self):
         """Tray icon: Rem's face when the art theme is on, otherwise the plain bolt."""
@@ -2527,11 +2577,13 @@ class App(ctk.CTk):
     # ==================================================================
 
     def _on_close(self):
-        if self.cfg.get("minimize_to_tray", True) and self._setup_tray():
+        if not self.cfg.get("minimize_to_tray", True):
+            self._force_quit()
+        elif self._setup_tray():
             self._window_visible = False
             self.withdraw()
         else:
-            self._force_quit()
+            self.iconify()
 
     def _force_quit(self):
         self._running = False
